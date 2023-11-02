@@ -60,12 +60,12 @@ layout(set = 1, binding = 0) uniform Ecco {
 
 layout(location = 0) out vec4 out_color; 
 
-vec2 frag_flip = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
 
 void main()
 {
+    vec2 frag_flip = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
     vec2 st = (frag_flip.xy / resolution.xy);
-    out_color = vec4(1.0);//vec4(foo, sin(time), st.x, 1.0);
+    out_color = vec4(foo, sin(time), st.x, 1.0);
 }
 "#;
 
@@ -115,10 +115,10 @@ layout(push_constant) uniform ShaderInputs {
 
 layout(location = 0) out vec4 out_color; 
 
-vec2 frag_flip = vec2(gl_FragCoord.x, 256.0 - gl_FragCoord.y);
 
 void main()
 {
+    vec2 frag_flip = vec2(gl_FragCoord.x, 256.0 - gl_FragCoord.y);
     vec2 st = (frag_flip.xy / vec2(256.0));
     out_color = vec4(foo, sin(time), st.x, 1.0);
 }
@@ -180,10 +180,10 @@ layout(set = 1, binding = 0) uniform Ecco {
 
 layout(location = 0) out vec4 out_color; 
 
-vec2 frag_flip = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
 
 void main()
 {
+    vec2 frag_flip = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
     vec2 st = (frag_flip.xy / resolution.xy);
     out_color = vec4(foo, sin(time), st.x, 1.0);
 }
