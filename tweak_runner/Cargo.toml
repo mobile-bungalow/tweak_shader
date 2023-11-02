@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 dhat = "0.3.2"
-tweak_shader = { path = "../tweak_shader/", features=  ["audio", "video"] }
+tweak_shader = { version = "0.1.1", features=  ["audio", "video"] }
 egui-wgpu = { version = "0.22.0", features = ["winit"] }
 egui-notify = "0.9"
 egui-winit = "0.22.0"

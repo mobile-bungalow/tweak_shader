@@ -1,6 +1,7 @@
 use crate::parsing::FromRanges;
 use bytemuck::*;
-use naga::{ScalarKind, TypeInner};
+use wgpu::naga;
+use wgpu::naga::{ScalarKind, TypeInner};
 
 /// A wrapper around mutable values that will be written to the custom uniforms.
 /// should be used when updating input values, i.e. when a user adjusts sliders

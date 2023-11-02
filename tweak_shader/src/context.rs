@@ -2,6 +2,7 @@ use crate::input_type::*;
 use crate::uniforms;
 use crate::VarName;
 use naga::front::glsl;
+use wgpu::naga;
 
 use naga::{
     front::glsl::{Frontend, Options},
@@ -236,9 +237,11 @@ impl RenderContext {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: pass.get_load_op(),
-                            store: true,
+                            store: wgpu::StoreOp::Store,
                         },
                     })],
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
                     depth_stencil_attachment: None,
                 });
 
@@ -258,9 +261,11 @@ impl RenderContext {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
-                            store: true,
+                            store: wgpu::StoreOp::Store,
                         },
                     })],
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
                     depth_stencil_attachment: None,
                 });
 

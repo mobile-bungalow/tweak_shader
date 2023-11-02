@@ -22,8 +22,7 @@ version = "6.0.0"
 optional = true
 
 [dependencies]
-naga = { version = "0.12.3", features = ["glsl-in", "span"] }
-wgpu = { version = "0.16.3", features = ["glsl"] }
+wgpu = { version = "0.18.0", features = ["glsl"] }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 nom = "7.1.3"
 rustfft = { version = "6.1.0" , optional = true }

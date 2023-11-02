@@ -3,6 +3,7 @@ use crate::parsing::DocumentDescriptor;
 use __core::num::NonZeroU32;
 use bytemuck::{checked::cast_slice, offset_of};
 use naga::{AddressSpace, ResourceBinding, StorageAccess, StructMember};
+use wgpu::naga;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -904,7 +905,7 @@ impl BindingEntry {
                 }
             } else {
                 let input = InputType::RawBytes(crate::input_type::RawBytes {
-                    inner: vec![0; ty.inner.size(&module.constants) as usize],
+                    inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
                 });
                 inputs.push((name, input));
             }
@@ -1024,7 +1025,7 @@ pub fn push_constant(
                     }
                 } else {
                     let input = InputType::RawBytes(crate::input_type::RawBytes {
-                        inner: vec![0; ty.inner.size(&module.constants) as usize],
+                        inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
                     });
                     inputs.push((name.clone(), input.clone()));
                     input_map.insert(name.clone(), inputs.len());
@@ -1531,6 +1532,8 @@ fn texture_fmt(fmt: &naga::StorageFormat) -> wgpu::TextureFormat {
         naga::StorageFormat::Rg16Snorm => wgpu::TextureFormat::Rg16Snorm,
         naga::StorageFormat::Rgba16Unorm => wgpu::TextureFormat::Rgba16Unorm,
         naga::StorageFormat::Rgba16Snorm => wgpu::TextureFormat::Rgba16Snorm,
+        naga::StorageFormat::Bgra8Unorm => wgpu::TextureFormat::Bgra8Unorm,
+        naga::StorageFormat::Rgb10a2Uint => wgpu::TextureFormat::Rgb10a2Uint,
     }
 }
 

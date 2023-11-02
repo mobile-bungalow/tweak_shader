@@ -65,7 +65,7 @@ vec2 frag_flip = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
 void main()
 {
     vec2 st = (frag_flip.xy / resolution.xy);
-    out_color = vec4(foo, sin(time), st.x, 1.0);
+    out_color = vec4(1.0);//vec4(foo, sin(time), st.x, 1.0);
 }
 "#;
 
@@ -83,7 +83,7 @@ fn basic_frag() {
 
     basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
     let time_0_bytes = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
-    //write_texture_to_png(&time_0_bytes, "basic.png").unwrap();
+    write_texture_to_png(&time_0_bytes, "basic.png").unwrap();
     assert!(approximately_equivalent(
         &time_0_bytes,
         &png_pixels!("./resources/basic.png")
@@ -590,7 +590,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
     let mut limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
     limits.max_push_constant_size = 256;
 
-    pollster::block_on(async {
+    let (d, q) = pollster::block_on(async {
         adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -602,7 +602,20 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             )
             .await
             .expect("Failed to create device")
-    })
+    });
+
+    d.on_uncaptured_error(Box::new(|e| match e {
+        wgpu::Error::OutOfMemory { .. } => {
+            panic!("Out Of GPU Memory! bailing");
+        }
+        wgpu::Error::Validation {
+            description,
+            source,
+        } => {
+            panic!("{description} : {source}");
+        }
+    }));
+    (d, q)
 }
 use image::{ImageBuffer, ImageFormat, Rgba};
 
