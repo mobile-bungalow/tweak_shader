@@ -1,0 +1,19 @@
+[package]
+name = "tweak_runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dhat = "0.3.2"
+tweak_shader = { path = "../tweak_shader/", features=  ["audio", "video"] }
+egui-wgpu = { version = "0.22.0", features = ["winit"] }
+egui-notify = "0.9"
+egui-winit = "0.22.0"
+pollster = "0.3.0"
+notify = "6.1.1"
+tinyfiledialogs = "3.9.1"
+image = "0.24.7"
+cpal = "0.15.2"
+ringbuf = "0.3.3"
+rustfft = "6.1.0" 
+chrono = "0.4.31"
