@@ -5,7 +5,9 @@ use crate::ui::UiState;
 
 use chrono::{Datelike, Local, Timelike};
 
+#[cfg(feature = "audio")]
 use tweak_shader::audio::AudioLoader;
+#[cfg(feature = "video")]
 use tweak_shader::video::VideoLoader;
 use tweak_shader::Error;
 use tweak_shader::RenderContext;
@@ -20,12 +22,78 @@ use std::path::PathBuf;
 
 use egui_wgpu::wgpu;
 
+// Monkey traits are bad but this will work for now
+#[cfg(not(feature = "video"))]
+mod dummy_video {
+    use std::sync::{Arc, Mutex};
+
+    pub struct VideoLoader;
+
+    impl VideoLoader {
+        pub fn init<P: AsRef<std::path::Path>>(_path: P) -> Result<Self, &'static str> {
+            Err("Compiled without the video feature!")
+        }
+        pub fn present(&self) -> Option<Arc<Mutex<Vec<u8>>>> {
+            unreachable!()
+        }
+        pub fn width(&self) -> u32 {
+            unreachable!()
+        }
+        pub fn height(&self) -> u32 {
+            unreachable!()
+        }
+    }
+}
+
+#[cfg(not(feature = "video"))]
+use dummy_video::VideoLoader;
+
+#[cfg(not(feature = "audio"))]
+mod dummy_audio {
+    use std::sync::{Arc, Mutex};
+
+    pub struct AudioLoader;
+
+    impl AudioLoader {
+        pub fn new<P: AsRef<std::path::Path>>(
+            _path: P,
+            _fft: bool,
+            _max_samples: Option<u32>,
+        ) -> Result<Self, &'static str> {
+            Err("Compiled without the Audio feature!")
+        }
+        pub fn present(&self) -> Arc<Mutex<Vec<f32>>> {
+            unreachable!()
+        }
+        pub fn samples(&self) -> usize {
+            unreachable!()
+        }
+
+        pub fn play(&self) {
+            unreachable!()
+        }
+
+        pub fn pause(&self) {
+            unreachable!()
+        }
+        pub fn channels(&self) -> u16 {
+            unreachable!()
+        }
+    }
+}
+
+#[cfg(not(feature = "audio"))]
+use dummy_audio::AudioLoader;
+
 #[derive(Debug)]
 enum RunnerError {
     Validation(String),
     MissingFile,
     Shader(Error),
+    #[cfg(feature = "video")]
     Video(tweak_shader::video::VideoLoaderErr),
+    #[cfg(not(feature = "video"))]
+    Video(&'static str),
     Image(String),
 }
 
@@ -770,7 +838,7 @@ impl App {
 }
 
 enum LoadedImage {
-    Video(tweak_shader::video::VideoLoader),
+    Video(VideoLoader),
     Image {
         height: u32,
         width: u32,
@@ -790,8 +858,7 @@ fn load_image_to_rgba8<P: AsRef<Path>>(file_path: P) -> Result<LoadedImage, Runn
         .unwrap_or(false);
 
     if is_video {
-        let loader =
-            tweak_shader::video::VideoLoader::init(file_path).map_err(RunnerError::Video)?;
+        let loader = VideoLoader::init(file_path).map_err(RunnerError::Video)?;
         Ok(LoadedImage::Video(loader))
     } else {
         let img = image::io::Reader::open(path)

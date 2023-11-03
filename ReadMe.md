@@ -23,20 +23,6 @@ This has some notable differences from other glsl based screen shader environmen
 * It is built on wgpu and naga. This means it enforced uniformity of control flow and will throw a validation error if you try to do things
 like access a texture in a conditional block.
 
-### Building
-
-The runner application requires the ffmpeg library installed via the [ffmpeg_next](https://github.com/zmwangx/rust-ffmpeg) crate. Please 
-see the platform specific build instructions for installing ffmpeg. Otherwise simply run
-```bash
-cargo build
-```
-and 
-
-```bash
-cargo run -- file tweak_shader_examples/<demo_file.fs>
-```
-To run the demo application.
-
 ### Usage
 
 ```Rust 
