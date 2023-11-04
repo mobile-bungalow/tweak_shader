@@ -252,7 +252,7 @@ impl RenderContext {
                 if let Some(bytes) = self.uniforms.push_constant_bytes() {
                     rpass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytes);
                 }
-                rpass.draw(0..6, 0..1);
+                rpass.draw(0..3, 0..1);
             } else {
                 let mut rpass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
@@ -276,7 +276,7 @@ impl RenderContext {
                 if let Some(bytes) = self.uniforms.push_constant_bytes() {
                     rpass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytes);
                 }
-                rpass.draw(0..6, 0..1);
+                rpass.draw(0..3, 0..1);
             }
 
             // copy the render pass target over to the
