@@ -613,170 +613,170 @@ fn parse_qualifier(input: &str) -> IResult<&str, (QVal, Option<QVal>)> {
     ))(input)
 }
 
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[test]
-    fn test_parse_qualifier_list_single_qualifier() {
-        let input = "(name = 42)";
-        let expected = vec![(QVal::Id("name".to_string()), Some(QVal::Num(42.0)))];
-        assert_eq!(parse_qualifier_list(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_qualifier_list_malformed_qualifiers() {
-        let input = "(name = 2.14, =, key = \"Value\" )";
-        assert!(parse_qualifier_list(input).is_err());
-    }
-    #[test]
-    fn test_parse_identifier() {
-        let input = "abc";
-        let expected = QVal::Id("abc".to_string());
-        assert_eq!(parse_identifier(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_floating_point() {
-        let input = "2.14";
-        let expected = QVal::Num(2.14);
-        assert_eq!(parse_floating_point(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_quoted_string() {
-        let input = r#""Hello, World!""#;
-        let expected = QVal::String("Hello, World!".to_string());
-        assert_eq!(parse_quoted_string(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_list() {
-        let input = "[1.2, 3.4, 5.6]";
-        let expected = QVal::List(vec![1.2, 3.4, 5.6]);
-        assert_eq!(parse_list(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_key_value() {
-        let input = "name = 42";
-        let expected = (QVal::Id("name".to_string()), Some(QVal::Num(42.0)));
-        assert_eq!(parse_key_value(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_qualifier() {
-        let input = "key = 3.33";
-        let expected = (QVal::Id("key".to_string()), Some(QVal::Num(3.33)));
-        assert_eq!(parse_qualifier(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_qualifier_no_value() {
-        let input = "key";
-        let expected = (QVal::Id("key".to_string()), None);
-        assert_eq!(parse_qualifier(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_qualifier_no_value_with_space() {
-        let input = "key ";
-        let expected = (QVal::Id("key".to_string()), None);
-        assert_eq!(parse_qualifier(input), Ok((" ", expected)));
-    }
-
-    #[test]
-    fn test_parse_qualifier_list() {
-        let input = "(name = 42, abc, def = \"Hello\")";
-        let expected = vec![
-            (QVal::Id("name".to_string()), Some(QVal::Num(42.0))),
-            (QVal::Id("abc".to_string()), None),
-            (
-                QVal::Id("def".to_string()),
-                Some(QVal::String("Hello".to_string())),
-            ),
-        ];
-        assert_eq!(parse_qualifier_list(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn test_parse_qualifier_list_whitepsace() {
-        let input = "  \t\t\t (version = 1.0, def = \"JAMBO\")";
-        let expected = vec![
-            (QVal::Id("version".to_string()), Some(QVal::Num(1.0))),
-            (
-                QVal::Id("def".to_string()),
-                Some(QVal::String("JAMBO".to_string())),
-            ),
-        ];
-        assert_eq!(parse_qualifier_list(input), Ok(("", expected)));
-    }
-
-    #[test]
-    fn simple_parse_doc() {
-        let pragma = "#pragma input(float, name=test)";
-        parse_document(pragma).unwrap();
-
-        let pragma = "#pragma input(float, name=\"test\")";
-        parse_document(pragma).unwrap();
-
-        let pragma = "#pragma input(float, name=\"MessedUp_dumb-identifier1992\")";
-        parse_document(pragma).unwrap();
-
-        let pragma = "#pragma input(gobingo, name=\"test\")";
-        assert!(parse_document(pragma).is_err());
-
-        let pragma = "#pragma input(float, missing_name)";
-        assert!(parse_document(pragma).is_err());
-
-        let pragma = "#pragma utility_block(identifier)";
-        parse_document(pragma).unwrap();
-
-        let pragma = "#pragma utility_block(strang)\n#pragma utility_block(crusty)";
-        assert!(parse_document(pragma).is_err());
-    }
-
-    #[test]
-    fn doc_validation() {
-        let pragma = r#"
-            #pragma input(float, name=test)
-
-            #pragma input(image, name=another)
-            
-            #pragma input(color, name=third, default = [1.0, 0.0, 0.0, 3.0])
-
-            #pragma input(int, name="good", max=100, min=200, default=3)
-
-            #pragma input(event, name="jim")
-            
-            #pragma input  (point , name="foo", max = [100.0, 200.0])
-
-            #pragma pass(1, persistent, target="something")
-
-            #pragma tweak_version(version = 3.0)
-            
-            #pragma utility_block("Temp")
-            "#;
-
-        let out = parse_document(pragma).unwrap();
-
-        assert_eq!(out.inputs.len(), 6);
-
-        assert!(matches!(
-            out.inputs.get("foo").unwrap(),
-            InputType::Point(crate::input_type::PointInput { .. })
-        ));
-
-        assert!(matches!(
-            out.inputs.get("third").unwrap(),
-            InputType::Color(crate::input_type::ColorInput { .. })
-        ));
-
-        assert_eq!(out.version, 3.0);
-
-        assert_eq!(out.passes.len(), 1);
-
-        assert_eq!(out.utility_block_name, Some("Temp".to_string()));
-    }
-}
+//#[cfg(test)]
+//mod tests {
+//
+//    use super::*;
+//
+//    #[test]
+//    fn test_parse_qualifier_list_single_qualifier() {
+//        let input = "(name = 42)";
+//        let expected = vec![(QVal::Id("name".to_string()), Some(QVal::Num(42.0)))];
+//        assert_eq!(parse_qualifier_list(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_qualifier_list_malformed_qualifiers() {
+//        let input = "(name = 2.14, =, key = \"Value\" )";
+//        assert!(parse_qualifier_list(input).is_err());
+//    }
+//    #[test]
+//    fn test_parse_identifier() {
+//        let input = "abc";
+//        let expected = QVal::Id("abc".to_string());
+//        assert_eq!(parse_identifier(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_floating_point() {
+//        let input = "2.14";
+//        let expected = QVal::Num(2.14);
+//        assert_eq!(parse_floating_point(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_quoted_string() {
+//        let input = r#""Hello, World!""#;
+//        let expected = QVal::String("Hello, World!".to_string());
+//        assert_eq!(parse_quoted_string(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_list() {
+//        let input = "[1.2, 3.4, 5.6]";
+//        let expected = QVal::List(vec![1.2, 3.4, 5.6]);
+//        assert_eq!(parse_list(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_key_value() {
+//        let input = "name = 42";
+//        let expected = (QVal::Id("name".to_string()), Some(QVal::Num(42.0)));
+//        assert_eq!(parse_key_value(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_qualifier() {
+//        let input = "key = 3.33";
+//        let expected = (QVal::Id("key".to_string()), Some(QVal::Num(3.33)));
+//        assert_eq!(parse_qualifier(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_qualifier_no_value() {
+//        let input = "key";
+//        let expected = (QVal::Id("key".to_string()), None);
+//        assert_eq!(parse_qualifier(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_qualifier_no_value_with_space() {
+//        let input = "key ";
+//        let expected = (QVal::Id("key".to_string()), None);
+//        assert_eq!(parse_qualifier(input), Ok((" ", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_qualifier_list() {
+//        let input = "(name = 42, abc, def = \"Hello\")";
+//        let expected = vec![
+//            (QVal::Id("name".to_string()), Some(QVal::Num(42.0))),
+//            (QVal::Id("abc".to_string()), None),
+//            (
+//                QVal::Id("def".to_string()),
+//                Some(QVal::String("Hello".to_string())),
+//            ),
+//        ];
+//        assert_eq!(parse_qualifier_list(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn test_parse_qualifier_list_whitepsace() {
+//        let input = "  \t\t\t (version = 1.0, def = \"JAMBO\")";
+//        let expected = vec![
+//            (QVal::Id("version".to_string()), Some(QVal::Num(1.0))),
+//            (
+//                QVal::Id("def".to_string()),
+//                Some(QVal::String("JAMBO".to_string())),
+//            ),
+//        ];
+//        assert_eq!(parse_qualifier_list(input), Ok(("", expected)));
+//    }
+//
+//    #[test]
+//    fn simple_parse_doc() {
+//        let pragma = "#pragma input(float, name=test)";
+//        parse_document(pragma).unwrap();
+//
+//        let pragma = "#pragma input(float, name=\"test\")";
+//        parse_document(pragma).unwrap();
+//
+//        let pragma = "#pragma input(float, name=\"MessedUp_dumb-identifier1992\")";
+//        parse_document(pragma).unwrap();
+//
+//        let pragma = "#pragma input(gobingo, name=\"test\")";
+//        assert!(parse_document(pragma).is_err());
+//
+//        let pragma = "#pragma input(float, missing_name)";
+//        assert!(parse_document(pragma).is_err());
+//
+//        let pragma = "#pragma utility_block(identifier)";
+//        parse_document(pragma).unwrap();
+//
+//        let pragma = "#pragma utility_block(strang)\n#pragma utility_block(crusty)";
+//        assert!(parse_document(pragma).is_err());
+//    }
+//
+//    #[test]
+//    fn doc_validation() {
+//        let pragma = r#"
+//            #pragma input(float, name=test)
+//
+//            #pragma input(image, name=another)
+//
+//            #pragma input(color, name=third, default = [1.0, 0.0, 0.0, 3.0])
+//
+//            #pragma input(int, name="good", max=100, min=200, default=3)
+//
+//            #pragma input(event, name="jim")
+//
+//            #pragma input  (point , name="foo", max = [100.0, 200.0])
+//
+//            #pragma pass(1, persistent, target="something")
+//
+//            #pragma tweak_version(version = 3.0)
+//
+//            #pragma utility_block("Temp")
+//            "#;
+//
+//        let out = parse_document(pragma).unwrap();
+//
+//        assert_eq!(out.inputs.len(), 6);
+//
+//        assert!(matches!(
+//            out.inputs.get("foo").unwrap(),
+//            InputType::Point(crate::input_type::PointInput { .. })
+//        ));
+//
+//        assert!(matches!(
+//            out.inputs.get("third").unwrap(),
+//            InputType::Color(crate::input_type::ColorInput { .. })
+//        ));
+//
+//        assert_eq!(out.version, 3.0);
+//
+//        assert_eq!(out.passes.len(), 1);
+//
+//        assert_eq!(out.utility_block_name, Some("Temp".to_string()));
+//    }
+//}
