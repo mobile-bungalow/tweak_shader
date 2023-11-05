@@ -100,9 +100,12 @@ fn main() {
                         }
                     }
                     WindowEvent::CursorMoved { position, .. } => {
+                        let size = window.inner_size();
                         app.queue_message(RunnerMessage::MouseMove {
                             x: position.x,
                             y: position.y,
+                            w: size.width as f64,
+                            h: size.height as f64,
                         });
                     }
                     WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,

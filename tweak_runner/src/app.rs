@@ -116,6 +116,8 @@ pub enum RunnerMessage {
     MouseMove {
         x: f64,
         y: f64,
+        w: f64,
+        h: f64,
     },
     WatchedFileChanged {
         path: PathBuf,
@@ -757,10 +759,36 @@ impl App {
                 self.current_shader_mut().set_mouse_up();
             }
             RunnerMessage::PrintEphemralError { error } => self.ui_state.notifications.push(error),
-            RunnerMessage::MouseMove { x, y } => {
+            RunnerMessage::MouseMove { x, y, w, h } => {
                 if !self.gui_context.egui_context.is_using_pointer() {
-                    self.current_shader_mut()
-                        .set_mouse_input([x as f32, y as f32]);
+                    if let Some([tex_w, tex_h]) = self.ui_state.options.lock_aspect_ratio {
+                        let window_w = w as f32;
+                        let window_h = h as f32;
+                        let h_scale = tex_h as f32 / window_h;
+                        let w_scale = tex_w as f32 / window_w;
+
+                        let window_aspect_ratio = w as f32 / h as f32;
+                        let letterbox_aspect_ratio = tex_w as f32 / tex_h as f32;
+
+                        if window_aspect_ratio > letterbox_aspect_ratio {
+                            let content_width = window_h * letterbox_aspect_ratio;
+                            let margin = (window_w - content_width) / 2.0;
+                            let mapped =
+                                ((x as f32 - margin) / (window_w - margin * 2.0)) * tex_w as f32;
+                            self.current_shader_mut()
+                                .set_mouse_input([mapped as f32, h_scale * y as f32]);
+                        } else {
+                            let content_height = window_w / letterbox_aspect_ratio;
+                            let margin = (window_h - content_height) / 2.0;
+                            let mapped =
+                                ((y as f32 - margin) / (window_h - margin * 2.0)) * tex_h as f32;
+                            self.current_shader_mut()
+                                .set_mouse_input([w_scale * x as f32, mapped]);
+                        }
+                    } else {
+                        self.current_shader_mut()
+                            .set_mouse_input([x as f32, y as f32]);
+                    }
                 }
             }
             RunnerMessage::WatchedFileChanged { .. } => {
