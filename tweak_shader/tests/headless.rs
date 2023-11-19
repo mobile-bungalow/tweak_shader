@@ -83,7 +83,7 @@ fn basic_frag() {
 
     basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
     let time_0_bytes = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
-    write_texture_to_png(&time_0_bytes, "basic.png").unwrap();
+    //write_texture_to_png(&time_0_bytes, "basic.png").unwrap();
     assert!(approximately_equivalent(
         &time_0_bytes,
         &png_pixels!("./resources/basic.png")
@@ -96,6 +96,27 @@ fn basic_frag() {
         &time_1_bytes,
         &png_pixels!("./resources/basic_time_1.png")
     ));
+}
+
+// reading and writing to non256 aligned textures should not panic
+#[test]
+fn misaligned() {
+    let (device, queue) = set_up_wgpu();
+    let mut basic = RenderContext::new(
+        BASIC_SRC,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
+    let _time_0_bytes =
+        basic.render_to_vec(&queue, &device, TEST_RENDER_DIM + 30, TEST_RENDER_DIM + 30);
+
+    basic.update_time(1.0);
+    let _time_1_bytes =
+        basic.render_to_vec(&queue, &device, TEST_RENDER_DIM - 30, TEST_RENDER_DIM - 30);
 }
 
 const PUSH_CONSTANT_ALIGNMENT_SRC: &str = r#"
@@ -371,6 +392,59 @@ fn shrimple_texture_load() {
     let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
     assert!(approximately_equivalent(&shrimple_bytes, &output));
+}
+
+#[test]
+fn unaligned_texture() {
+    let (device, queue) = set_up_wgpu();
+    // this will panic if the pipeline can't be set up.
+    let mut tx_load = RenderContext::new(
+        SHRIMPLE_TEXTURE_LOAD,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    // know from file.
+    let width = 500;
+    let height = 350;
+
+    let zac_bytes = png_pixels!("./resources/zac.png");
+
+    tx_load.update_resolution([width as f32, height as f32]);
+    tx_load.load_texture(zac_bytes.clone(), "input_image".into(), width, height);
+
+    let output = tx_load.render_to_vec(&queue, &device, width, height);
+
+    assert!(approximately_equivalent(&zac_bytes, &output));
+}
+
+#[test]
+fn unaligned_texture_from_slice() {
+    let (device, queue) = set_up_wgpu();
+    // this will panic if the pipeline can't be set up.
+    let mut tx_load = RenderContext::new(
+        SHRIMPLE_TEXTURE_LOAD,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    // know from file.
+    let width = 500;
+    let height = 350;
+
+    let zac_bytes = png_pixels!("./resources/zac.png");
+
+    tx_load.update_resolution([width as f32, height as f32]);
+    tx_load.load_texture(zac_bytes.clone(), "input_image".into(), width, height);
+
+    let mut vec = vec![0u8; (width * height * 4) as usize];
+    tx_load.render_to_slice(&queue, &device, width, height, vec.as_mut_slice());
+
+    assert!(approximately_equivalent(&zac_bytes, &vec.as_slice()));
 }
 
 const INPUTS_ITER: &str = r#"
@@ -657,10 +731,14 @@ fn target_desc(width: u32, height: u32) -> wgpu::TextureDescriptor<'static> {
 
 #[allow(dead_code)]
 // use this function when adding validation tests
-fn write_texture_to_png(data: &[u8], file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let texture: ImageBuffer<Rgba<u8>, _> =
-        ImageBuffer::from_vec(TEST_RENDER_DIM, TEST_RENDER_DIM, data.to_owned())
-            .ok_or("Failed to create ImageBuffer")?;
+fn write_texture_to_png(
+    data: &[u8],
+    file_path: &str,
+    width: u32,
+    height: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let texture: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_vec(width, height, data.to_owned())
+        .ok_or("Failed to create ImageBuffer")?;
 
     // Write the texture to a PNG file.
     texture.save_with_format(file_path, ImageFormat::Png)?;

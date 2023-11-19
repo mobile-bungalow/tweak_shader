@@ -475,7 +475,7 @@ impl Uniforms {
                     wgpu::ImageDataLayout {
                         offset: 0,
                         bytes_per_row: Some(4 * width),
-                        rows_per_image: Some(height),
+                        rows_per_image: None,
                     },
                     wgpu::Extent3d {
                         width,

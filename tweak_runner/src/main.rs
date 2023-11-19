@@ -201,6 +201,8 @@ fn parse_commands() -> (PathBuf, String) {
     if !no_fork {
         if let Ok(current_exe) = env::current_exe() {
             let mut command = std::process::Command::new(current_exe);
+            command.stdout(std::process::Stdio::null());
+            command.stderr(std::process::Stdio::null());
 
             // Get the command-line arguments, skipping the first argument (the executable name).
             let args: Vec<String> = env::args().collect();

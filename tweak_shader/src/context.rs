@@ -270,6 +270,7 @@ impl RenderContext {
                 });
 
                 rpass.set_pipeline(&self.pipeline);
+                rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }
@@ -540,14 +541,13 @@ impl RenderContext {
             .block_size(Some(wgpu::TextureAspect::All))
             .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
-        let mut out = vec![0; (block_size * width * height) as usize];
-
         if !self
             .cpu_view_cache
             .as_ref()
             .is_some_and(|t| t.width() == width && t.height() == height)
         {
             let tex = device.create_texture(&target_desc(width, height, self.uniforms.format()));
+
             self.cpu_view_cache = Some(tex);
         };
 
@@ -558,6 +558,8 @@ impl RenderContext {
             .create_view(&Default::default());
 
         self.render(queue, device, &view, width, height);
+
+        let mut out = vec![0; (width * height * block_size) as usize];
 
         read_texture_contents_to_slice(
             device,
@@ -1026,10 +1028,14 @@ fn read_texture_contents_to_slice(
     let block_size = format
         .block_size(Some(wgpu::TextureAspect::All))
         .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
+
+    let row_byte_ct = block_size * width;
+    let padded_row_byte_ct = (row_byte_ct + 255) & !255;
+
     // Create a buffer to store the texture data
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Texture Read Buffer"),
-        size: (height * width * block_size) as u64,
+        size: (height * padded_row_byte_ct) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -1046,8 +1052,8 @@ fn read_texture_contents_to_slice(
             buffer: &buffer,
             layout: wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(block_size * width),
-                rows_per_image: Some(height),
+                bytes_per_row: Some(padded_row_byte_ct),
+                rows_per_image: None,
             },
         },
         wgpu::Extent3d {
@@ -1061,11 +1067,16 @@ fn read_texture_contents_to_slice(
 
     {
         let buffer_slice = buffer.slice(..);
-        buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
-
+        buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
         device.poll(wgpu::Maintain::Wait);
+        let gpu_slice = buffer_slice.get_mapped_range();
+        let gpu_chunks = gpu_slice.chunks(padded_row_byte_ct as usize);
+        let slice_chunks = slice.chunks_mut(row_byte_ct as usize);
+        let iter = slice_chunks.zip(gpu_chunks);
 
-        slice.copy_from_slice(buffer_slice.get_mapped_range().as_ref());
+        for (output_chunk, gpu_chunk) in iter {
+            output_chunk.copy_from_slice(&gpu_chunk[..row_byte_ct as usize]);
+        }
     };
 
     buffer.unmap();

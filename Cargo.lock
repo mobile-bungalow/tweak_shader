@@ -934,6 +934,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb1d22c66e66d9d72e1758f0bd7d4fd0bee04cad842ee34587d68c07e45d088c"
 
 [[package]]
+name = "futures-intrusive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
+dependencies = [
+ "futures-core",
+ "lock_api",
+ "parking_lot",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1616,7 +1627,6 @@ dependencies = [
  "indexmap 1.9.3",
  "log",
  "num-traits",
- "pp-rs",
  "rustc-hash",
  "spirv",
  "termcolor",
@@ -2630,23 +2640,7 @@ dependencies = [
  "ringbuf",
  "rustfft",
  "tinyfiledialogs",
- "tweak_shader 0.1.1",
-]
-
-[[package]]
-name = "tweak_shader"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "752ed4ad1a3926dd2c353b6fcfdda1e6c54c7fdd9a654ae98523c53db30d8b38"
-dependencies = [
- "bytemuck",
- "ffmpeg-next",
- "naga 0.12.3",
- "nom",
- "rodio",
- "rustfft",
- "serde",
- "wgpu 0.16.3",
+ "tweak_shader 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -2655,9 +2649,24 @@ version = "0.1.2"
 dependencies = [
  "bytemuck",
  "ffmpeg-next",
+ "futures-intrusive",
  "image",
  "nom",
  "pollster",
+ "rodio",
+ "rustfft",
+ "wgpu 0.18.0",
+]
+
+[[package]]
+name = "tweak_shader"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f91c12c59733e30f8d033d59bf6d3bcfde12730276b74180b1ed1719a720f007"
+dependencies = [
+ "bytemuck",
+ "ffmpeg-next",
+ "nom",
  "rodio",
  "rustfft",
  "wgpu 0.18.0",
