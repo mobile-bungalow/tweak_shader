@@ -444,7 +444,7 @@ fn unaligned_texture_from_slice() {
     let mut vec = vec![0u8; (width * height * 4) as usize];
     tx_load.render_to_slice(&queue, &device, width, height, vec.as_mut_slice());
 
-    assert!(approximately_equivalent(&zac_bytes, &vec.as_slice()));
+    assert!(approximately_equivalent(&zac_bytes, vec.as_slice()));
 }
 
 const INPUTS_ITER: &str = r#"

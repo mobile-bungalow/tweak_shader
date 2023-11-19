@@ -705,7 +705,7 @@ impl App {
                 }
                 Err(e) => {
                     self.queue_message(RunnerMessage::PrintEphemralError {
-                        error: format!("{e}"),
+                        error: e.to_string(),
                     });
                 }
             },
@@ -776,7 +776,7 @@ impl App {
                             let mapped =
                                 ((x as f32 - margin) / (window_w - margin * 2.0)) * tex_w as f32;
                             self.current_shader_mut()
-                                .set_mouse_input([mapped as f32, h_scale * y as f32]);
+                                .set_mouse_input([mapped, h_scale * y as f32]);
                         } else {
                             let content_height = window_w / letterbox_aspect_ratio;
                             let margin = (window_h - content_height) / 2.0;
