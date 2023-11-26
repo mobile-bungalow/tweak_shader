@@ -186,11 +186,9 @@ fn setup_egui(
     device: &wgpu::Device,
     swapchain_format: &wgpu::TextureFormat,
 ) -> Result<GuiContext, InitializationError> {
-    let mut egui_state = State::new(window);
-
-    egui_state.set_pixels_per_point(window.scale_factor() as f32);
-
     let egui_context = egui_winit::egui::Context::default();
+
+    let egui_state = State::new(egui_context.viewport_id(), window, None, None);
 
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
@@ -218,7 +216,7 @@ fn setup_egui(
     let mut egui_painter =
         egui_wgpu::winit::Painter::new(egui_wgpu::WgpuConfiguration::default(), 1, None, true);
 
-    pollster::block_on(egui_painter.set_window(Some(window)))
+    pollster::block_on(egui_painter.set_window(egui_context.viewport_id(), Some(window)))
         .map_err(|_| InitializationError::EguiPainterSetupError)?;
 
     let egui_screen_desc = ScreenDescriptor {

@@ -109,7 +109,9 @@ impl RenderContext {
         let sets = sets.iter().map(|s| *s as i32).next_back().unwrap_or(-1);
         let sets = (0..(sets + 1))
             .map(|s| {
-                uniforms::BindGroup::new_from_naga(s as u32, &naga_mod, &document, device, queue)
+                uniforms::BindGroup::new_from_naga(
+                    s as u32, &naga_mod, &document, device, queue, &format,
+                )
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(crate::Error::UniformError)?;
@@ -328,7 +330,7 @@ impl RenderContext {
     /// the inputs provided by the user, as well as
     /// the raw bytes of all the uniforms maintained by the [RenderContext]
     /// that do not have input pragmas.
-    pub fn iter_inputs(&mut self) -> impl Iterator<Item = (&str, &InputType)> {
+    pub fn iter_inputs(&self) -> impl Iterator<Item = (&str, &InputType)> {
         self.uniforms.iter_custom_uniforms()
     }
 
@@ -565,7 +567,6 @@ impl RenderContext {
             device,
             queue,
             self.cpu_view_cache.as_ref().unwrap(),
-            &self.uniforms.format(),
             height,
             width,
             &mut out,
@@ -610,7 +611,6 @@ impl RenderContext {
             device,
             queue,
             self.cpu_view_cache.as_ref().unwrap(),
-            &self.uniforms.format(),
             height,
             width,
             slice,
@@ -737,13 +737,19 @@ impl RenderContext {
         self.uniforms.global_data_mut().mouse[3] = -f32::abs(old);
     }
 
-    // Removes a texture with the variable name `var` from the pipeline,
-    // It will be replaced with a placeholder texture which is a 1x1 black pixel.
-    // returns true if the texture existed.
+    /// Removes a texture with the variable name `var` from the pipeline,
+    /// It will be replaced with a placeholder texture which is a 1x1 black pixel.
+    /// returns true if the texture existed.
     pub fn remove_texture(&mut self, var: &str) -> bool {
         let stat = self.uniforms.unload_texture(var);
         let stream = self.streams.remove(var).is_some();
         stat || stream
+    }
+
+    /// Returns true if this render context builds up
+    /// a state over its runtime using persistent targets
+    pub fn is_stateful(&mut self) -> bool {
+        self.passes.iter().any(|pass| pass.persistent)
     }
 
     /// copy all common textures and
@@ -1020,12 +1026,12 @@ fn read_texture_contents_to_slice(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
-    format: &wgpu::TextureFormat,
     height: u32,
     width: u32,
     slice: &mut [u8],
 ) {
-    let block_size = format
+    let block_size = texture
+        .format()
         .block_size(Some(wgpu::TextureAspect::All))
         .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
@@ -1069,6 +1075,7 @@ fn read_texture_contents_to_slice(
         let buffer_slice = buffer.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
         device.poll(wgpu::Maintain::Wait);
+
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(padded_row_byte_ct as usize);
         let slice_chunks = slice.chunks_mut(row_byte_ct as usize);

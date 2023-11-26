@@ -515,7 +515,10 @@ impl App {
             output.platform_output,
         );
 
-        let prims = self.gui_context.egui_context.tessellate(output.shapes);
+        let prims = self
+            .gui_context
+            .egui_context
+            .tessellate(output.shapes, window.scale_factor() as f32);
 
         self.gui_context.egui_renderer.update_buffers(
             wgpu_device,
@@ -533,10 +536,12 @@ impl App {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
             });
 
             self.gui_context.egui_renderer.render(
@@ -645,18 +650,21 @@ impl App {
         let _ = self
             .gui_context
             .egui_state
-            .on_event(&self.gui_context.egui_context, event);
+            .on_window_event(&self.gui_context.egui_context, event);
         match event {
             egui_winit::winit::event::WindowEvent::Resized(size) => {
                 self.gui_context.egui_screen_desc.size_in_pixels = [size.width, size.height];
-                self.gui_context
-                    .egui_painter
-                    .on_window_resized(size.width, size.height);
+                self.gui_context.egui_painter.on_window_resized(
+                    self.gui_context.egui_context.viewport_id(),
+                    size.width.try_into().unwrap(),
+                    size.height.try_into().unwrap(),
+                );
             }
             egui_winit::winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.gui_context
-                    .egui_state
-                    .set_pixels_per_point(*scale_factor as f32);
+                //self.gui_context
+                //    .egui_state
+                //    .set_pixels_per_point(*scale_factor as f32);
+
                 self.gui_context.egui_screen_desc.pixels_per_point = *scale_factor as f32;
             }
             _ => {}

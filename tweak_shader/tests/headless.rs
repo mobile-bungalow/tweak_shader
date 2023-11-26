@@ -395,6 +395,32 @@ fn shrimple_texture_load() {
 }
 
 #[test]
+// test a texture identity shader
+fn float_texture_load() {
+    let (device, queue) = set_up_wgpu();
+    // this will panic if the pipeline can't be set up.
+    let mut tx_load = RenderContext::new(
+        SHRIMPLE_TEXTURE_LOAD,
+        wgpu::TextureFormat::Rgba32Float,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
+
+    tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
+    tx_load.load_texture(
+        shrimple_bytes.clone(),
+        "input_image".into(),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
+
+    let _ = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+}
+
+#[test]
 fn unaligned_texture() {
     let (device, queue) = set_up_wgpu();
     // this will panic if the pipeline can't be set up.
@@ -594,7 +620,6 @@ void main() {
 ";
 
 #[test]
-// test a texture identity shader
 fn letterboxed_shrimple_texture_load() {
     let (device, queue) = set_up_wgpu();
 

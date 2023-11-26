@@ -135,7 +135,7 @@ void main()
 {
     vec2 fragCoord = vec2(gl_FragCoord.x, iResolution.y - gl_FragCoord.y);
     vec2 uv = (fragCoord-iResolution.xy*.5)/iResolution.y;
-    t=iTime*time_scale;
+    t=iTime*7.;
     vec3 from=path(t);
     adv=path(t+6.+sin(t*.1)*3.);
     vec3 dir=normalize(vec3(uv,.7));

@@ -195,6 +195,11 @@ fn parse_commands() -> (PathBuf, String) {
         }
     }
 
+    let Some(path) = file_path else {
+        eprintln!("Error: Please specify a file with --file <path_to_shader>");
+        process::exit(1);
+    };
+
     // ifn't ain't no fork.
     // fork it with no fork.
     // I sure hope this doesn't crash someones computer.
@@ -223,11 +228,6 @@ fn parse_commands() -> (PathBuf, String) {
             }
         }
     }
-
-    let Some(path) = file_path else {
-        eprintln!("Error: Please specify a file with --file <path_to_shader>");
-        process::exit(1);
-    };
 
     match read_file(&path) {
         Err(e) => {

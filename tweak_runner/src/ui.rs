@@ -2,7 +2,7 @@ use crate::RunnerMessage;
 
 use tweak_shader::input_type::{InputVariant, MutInputInt};
 
-use egui_winit::egui::plot::{Plot, PlotPoint, PlotPoints, Points};
+use egui_plot::{Plot, PlotPoint, PlotPoints, Points};
 use egui_winit::egui::Button;
 use egui_winit::egui::Color32;
 
@@ -99,14 +99,7 @@ pub fn side_panel(
                         ui.separator();
                     };
 
-                    ui.horizontal(|ui| {
-                        if ui_state.options.removal_staged
-                            && ui.add(Button::new("Remove")).clicked()
-                        {
-                            ui_state.options.removal_staged = false;
-                        }
-                        input_widget(name, &mut val, ui_state, message_sender, ui);
-                    });
+                    input_widget(name, &mut val, ui_state, message_sender, ui);
                 }
             });
         });
@@ -333,7 +326,7 @@ fn point_selector(ui: &mut Ui, name: &str, input: &mut tweak_shader::input_type:
         .allow_double_click_reset(false)
         .view_aspect(2.0)
         .show(ui, |plot_ui| {
-            if plot_ui.plot_clicked()
+            if plot_ui.response().clicked()
                 || plot_ui.pointer_coordinate_drag_delta() != egui_winit::egui::Vec2::ZERO
             {
                 if let Some(p) = plot_ui.pointer_coordinate() {

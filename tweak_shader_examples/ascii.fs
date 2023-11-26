@@ -37,7 +37,7 @@ layout(set = 0, binding = 3) uniform custom_inputs {
 
 float character(float n, vec2 p) // some compilers have the word "char" reserved
 {
-	p = floor(p*vec2(4.0, 4.0) + 2.5);
+	p = floor(p*vec2(-4.0, 4.0) + 4.0);
 	if (clamp(p.x, 0.0, 4.0) == p.x && clamp(p.y, 0.0, 4.0) == p.y)
 	{
 		if (int(mod(n/exp2(p.x + 5.0*p.y), 2.0)) == 1) return 1.0;

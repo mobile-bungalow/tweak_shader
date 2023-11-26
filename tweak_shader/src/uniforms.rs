@@ -3,7 +3,7 @@ use crate::parsing::DocumentDescriptor;
 use __core::num::NonZeroU32;
 use bytemuck::{checked::cast_slice, offset_of};
 use naga::{AddressSpace, ResourceBinding, StorageAccess, StructMember};
-use wgpu::naga;
+use wgpu::{naga, TextureFormat};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,9 +33,9 @@ const DEFAULT_SAMPLER: wgpu::SamplerDescriptor = wgpu::SamplerDescriptor {
     address_mode_u: wgpu::AddressMode::ClampToEdge,
     address_mode_v: wgpu::AddressMode::ClampToEdge,
     address_mode_w: wgpu::AddressMode::ClampToEdge,
-    mag_filter: wgpu::FilterMode::Linear,
-    min_filter: wgpu::FilterMode::Linear,
-    mipmap_filter: wgpu::FilterMode::Linear,
+    mag_filter: wgpu::FilterMode::Nearest,
+    min_filter: wgpu::FilterMode::Nearest,
+    mipmap_filter: wgpu::FilterMode::Nearest,
     lod_min_clamp: 0.0,
     lod_max_clamp: 32.0,
     compare: None,
@@ -1065,6 +1065,7 @@ impl BindGroup {
         document: &crate::parsing::DocumentDescriptor,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        format: &wgpu::TextureFormat,
     ) -> Result<BindGroup, Error> {
         let mut layout_entries = vec![];
         let mut binding_entries = vec![];
@@ -1140,7 +1141,7 @@ impl BindGroup {
                         None => InputType::Image(crate::input_type::TextureStatus::Uninit),
                     };
 
-                    let entry = image_entry_from_naga(class, dim, *arrayed, binding);
+                    let entry = image_entry_from_naga(class, dim, *arrayed, binding, format);
 
                     layout_entries.push(entry);
 
@@ -1160,8 +1161,14 @@ impl BindGroup {
                         name: uniform.name.clone().unwrap_or_default(),
                     });
 
+                    let sampler_type = if matches!(format, wgpu::TextureFormat::Rgba32Float) {
+                        wgpu::SamplerBindingType::NonFiltering
+                    } else {
+                        wgpu::SamplerBindingType::Filtering
+                    };
+
                     let entry = wgpu::BindGroupLayoutEntry {
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Sampler(sampler_type),
                         visibility: ShaderStages::VERTEX_FRAGMENT,
                         binding,
                         count: None,
@@ -1431,7 +1438,16 @@ impl BindGroup {
                             resource: wgpu::BindingResource::Sampler(&*samp),
                         });
                     } else {
-                        let default_sampler = device.create_sampler(&DEFAULT_SAMPLER);
+                        let mut samp_desc = DEFAULT_SAMPLER;
+
+                        if matches!(place_holder_tex.format(), wgpu::TextureFormat::Rgba32Float) {
+                            samp_desc.mag_filter = wgpu::FilterMode::Nearest;
+                            samp_desc.min_filter = wgpu::FilterMode::Nearest;
+                            samp_desc.mipmap_filter = wgpu::FilterMode::Nearest;
+                        };
+
+                        let default_sampler = device.create_sampler(&samp_desc);
+
                         *samp = Some(default_sampler);
                         out.push(wgpu::BindGroupEntry {
                             binding: *binding,
@@ -1455,13 +1471,14 @@ fn image_entry_from_naga(
     dim: &naga::ImageDimension,
     arrayed: bool,
     binding: u32,
+    format: &wgpu::TextureFormat,
 ) -> wgpu::BindGroupLayoutEntry {
     // no support for texture arrays just yet
     let count = if arrayed { NonZeroU32::new(1) } else { None };
     match class {
         naga::ImageClass::Sampled { kind, multi } => wgpu::BindGroupLayoutEntry {
             ty: wgpu::BindingType::Texture {
-                sample_type: sample_kind(kind),
+                sample_type: sample_kind(kind, format),
                 view_dimension: image_dim(dim),
                 multisampled: *multi,
             },
@@ -1547,11 +1564,13 @@ fn storage_access(access: &naga::StorageAccess) -> wgpu::StorageTextureAccess {
     }
 }
 
-fn sample_kind(scalar: &naga::ScalarKind) -> wgpu::TextureSampleType {
+fn sample_kind(scalar: &naga::ScalarKind, format: &TextureFormat) -> wgpu::TextureSampleType {
     match scalar {
         naga::ScalarKind::Sint => wgpu::TextureSampleType::Sint,
         naga::ScalarKind::Uint => wgpu::TextureSampleType::Uint,
-        naga::ScalarKind::Float => wgpu::TextureSampleType::Float { filterable: true },
+        naga::ScalarKind::Float => wgpu::TextureSampleType::Float {
+            filterable: !matches!(format, wgpu::TextureFormat::Rgba32Float),
+        },
         naga::ScalarKind::Bool => wgpu::TextureSampleType::Uint,
     }
 }
