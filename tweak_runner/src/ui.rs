@@ -3,7 +3,6 @@ use crate::RunnerMessage;
 use tweak_shader::input_type::{InputVariant, MutInputInt};
 
 use egui_plot::{Plot, PlotPoint, PlotPoints, Points};
-use egui_winit::egui::Button;
 use egui_winit::egui::Color32;
 
 use egui_winit::egui::RichText;
