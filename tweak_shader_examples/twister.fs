@@ -41,8 +41,6 @@ layout(location = 0) out vec4 out_color;
 
 #define PI 3.14159265359
 
-float iTime = time * time_scale;
-
 // Based on iq's 'Noise - value noise' shader:
 // https://www.shadertoy.com/view/lsf3WH
 float hash(in vec2 p)
@@ -143,6 +141,7 @@ void run(out float _a, inout vec2 _p, in vec2 uv)
 		v.y = floor(v.y + 0.5);
 	}
 
+  float iTime = time * time_scale;
 	vec2 offs = vec2(RES * (0.5 * PI * (0.8 + 0.2 * cos(iTime)) * sin(2.0 * iTime + 0.5 * v.y / RES)),
 					 v.y);
 
@@ -184,6 +183,7 @@ void main()
 	float tx = n.x;
 	n.x = n.x * cos(a) - n.z * sin(a);
 	n.z = n.z * cos(a) + tx * sin(a);
+  float iTime = time * time_scale;
 	vec3 l = -normalize(vec3(cos(iTime), sin(-iTime), 1.0));
 	float ndotl = max(0.0, dot(n, l));
 	c = vec3(0.50, 0.35, 0.20) + albedo.xyz +
