@@ -309,8 +309,16 @@ impl RenderContext {
                 if let Some(ref tex_name) = pass.bind_group_target_texture {
                     let size = height * width * 4;
                     let slice = &vec![0; size as usize];
-                    self.uniforms
-                        .load_texture(tex_name, slice, height, width, device, queue);
+                    self.uniforms.load_texture(
+                        tex_name,
+                        slice,
+                        height,
+                        width,
+                        None,
+                        &wgpu::TextureFormat::Rgba8UnormSrgb,
+                        device,
+                        queue,
+                    );
                 }
             }
         }
@@ -432,6 +440,31 @@ impl RenderContext {
         } else {
             None
         }
+    }
+
+    /// Loads a texture of the specified format into the variable with name `name`
+    /// immediately.
+    pub fn load_image_immediate<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        height: u32,
+        width: u32,
+        bytes_per_row: u32,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: &wgpu::TextureFormat,
+        data: &[u8],
+    ) {
+        self.uniforms.load_texture(
+            name.as_ref(),
+            data,
+            height,
+            width,
+            Some(bytes_per_row),
+            format,
+            device,
+            queue,
+        );
     }
 
     /// Creates a texture view and maps it to the pipeline in place of a locally
@@ -626,8 +659,16 @@ impl RenderContext {
                     width,
                     ref mut data,
                 } if *dirty => {
-                    self.uniforms
-                        .load_texture(name, data.as_ref(), *height, *width, device, queue);
+                    self.uniforms.load_texture(
+                        name,
+                        data.as_ref(),
+                        *height,
+                        *width,
+                        None,
+                        &wgpu::TextureFormat::Rgba8UnormSrgb,
+                        device,
+                        queue,
+                    );
                     *dirty = false;
                 }
                 StreamInfo::Audio {
@@ -641,6 +682,8 @@ impl RenderContext {
                         float_to_rgba8_snorm(data).as_slice(),
                         *channels as u32,
                         *samples as u32,
+                        None,
+                        &wgpu::TextureFormat::Rgba8UnormSrgb,
                         device,
                         queue,
                     );
@@ -656,6 +699,8 @@ impl RenderContext {
                 job.data.as_ref(),
                 job.height,
                 job.width,
+                None,
+                &wgpu::TextureFormat::Rgba8UnormSrgb,
                 device,
                 queue,
             );

@@ -442,6 +442,8 @@ impl Uniforms {
         data: &[u8],
         height: u32,
         width: u32,
+        bytes_per_row: Option<u32>,
+        format: &wgpu::TextureFormat,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
@@ -468,13 +470,19 @@ impl Uniforms {
                     height: h,
                 },
                 Some(tex),
-            ) if *h == height && *w == width => {
+            ) if *h == height && *w == width && tex.format() == *format => {
+                let block_size = tex
+                    .format()
+                    .block_size(Some(wgpu::TextureAspect::All))
+                    .expect(
+                        "It seems like you are trying to render to a Depth Stencil. Stop that.",
+                    );
                 queue.write_texture(
                     tex.as_image_copy(),
                     data,
                     wgpu::ImageDataLayout {
                         offset: 0,
-                        bytes_per_row: Some(4 * width),
+                        bytes_per_row: bytes_per_row.or(Some(width * block_size)),
                         rows_per_image: None,
                     },
                     wgpu::Extent3d {
@@ -485,7 +493,32 @@ impl Uniforms {
                 );
             }
             _ => {
-                let tex = device.create_texture_with_data(queue, &txtr_desc(width, height), data);
+                let mut desc = txtr_desc(width, height);
+                desc.format = *format;
+                let tex = device.create_texture(&desc);
+
+                let block_size = tex
+                    .format()
+                    .block_size(Some(wgpu::TextureAspect::All))
+                    .expect(
+                        "It seems like you are trying to render to a Depth Stencil. Stop that.",
+                    );
+
+                queue.write_texture(
+                    tex.as_image_copy(),
+                    data,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: bytes_per_row.or(Some(width * block_size)),
+                        rows_per_image: None,
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+
                 self.set_texture(variable_name, tex);
             }
         }
@@ -1186,7 +1219,7 @@ impl BindGroup {
         });
 
         let place_holder_texture =
-            device.create_texture_with_data(queue, &txtr_desc(1, 1), &[0, 0, 0, 255u8]);
+            device.create_texture_with_data(queue, &txtr_desc(1, 1), &[0, 0, 0, 0]);
 
         let bind_group = Self::update_uniforms_helper(
             &mut binding_entries,
