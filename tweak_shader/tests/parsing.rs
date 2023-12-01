@@ -166,7 +166,16 @@ fn missing_inputs() {
 }
 
 fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::default();
+    let instance = if cfg!(windows) {
+        let desc = wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            ..Default::default()
+        };
+
+        wgpu::Instance::new(desc)
+    } else {
+        wgpu::Instance::default()
+    };
 
     let adapter = pollster::block_on(async {
         instance

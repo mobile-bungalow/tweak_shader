@@ -27,6 +27,7 @@ fn main() {
         wgpu_device,
         wgpu_queue,
         gui_context,
+        instance,
     } = match initialization::initialize(&path) {
         Ok(r) => r,
         Err(error) => {
@@ -122,6 +123,8 @@ fn main() {
                 };
             }
             Event::RedrawRequested(_) => {
+                // need this or crash on windows will occur
+                instance.poll_all(true);
                 if resized {
                     wgpu_surface.configure(&wgpu_device, &wgpu_surface_config);
                     resized = false;

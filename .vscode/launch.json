@@ -1,0 +1,102 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'tweak_shader'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=tweak_shader"
+                ],
+                "filter": {
+                    "name": "tweak_shader",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'headless'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=headless",
+                    "--package=tweak_shader"
+                ],
+                "filter": {
+                    "name": "headless",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'parsing'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=parsing",
+                    "--package=tweak_shader"
+                ],
+                "filter": {
+                    "name": "parsing",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'tweak_runner'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=tweak_runner",
+                    "--package=tweak_runner"
+                ],
+                "filter": {
+                    "name": "tweak_runner",
+                    "kind": "bin"
+                }
+            },
+            "args": ["--no-fork", "--file", ".\\tweak_shader_examples\\ascii.fs"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'tweak_runner'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=tweak_runner",
+                    "--package=tweak_runner"
+                ],
+                "filter": {
+                    "name": "tweak_runner",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
