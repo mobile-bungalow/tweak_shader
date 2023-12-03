@@ -946,7 +946,10 @@ impl BindingEntry {
 
         let align = inputs
             .iter()
-            .map(|(_, i)| i.as_bytes().len())
+            .map(|(_, i)| match i {
+                InputType::Point(_) => std::mem::size_of::<[f32; 4]>(),
+                _ => i.as_bytes().len(),
+            })
             .max()
             .unwrap_or(0);
 

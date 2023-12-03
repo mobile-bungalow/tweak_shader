@@ -783,7 +783,7 @@ impl RenderContext {
     }
 
     /// Removes a texture with the variable name `var` from the pipeline,
-    /// It will be replaced with a placeholder texture which is a 1x1 black pixel.
+    /// It will be replaced with a placeholder texture which is a 1x1 transparent pixel.
     /// returns true if the texture existed.
     pub fn remove_texture(&mut self, var: &str) -> bool {
         let stat = self.uniforms.unload_texture(var);
