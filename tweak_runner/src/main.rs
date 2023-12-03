@@ -27,6 +27,7 @@ fn main() {
         wgpu_device,
         wgpu_queue,
         gui_context,
+        ..
     } = match initialization::initialize(&path) {
         Ok(r) => r,
         Err(error) => {

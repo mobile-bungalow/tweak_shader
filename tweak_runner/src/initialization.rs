@@ -68,6 +68,7 @@ pub struct Resources {
     pub wgpu_device: wgpu::Device,
     pub wgpu_queue: wgpu::Queue,
     pub gui_context: GuiContext,
+    pub instance: wgpu::Instance,
 }
 
 fn create_window(event_loop: &EventLoop<RunnerMessage>) -> Result<Window, InitializationError> {
@@ -93,8 +94,8 @@ fn request_adapter(
 fn create_device(
     adapter: &wgpu::Adapter,
 ) -> Result<(wgpu::Device, wgpu::Queue), InitializationError> {
-    let mut limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
-    limits.max_push_constant_size = 256;
+    let mut limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
+    limits.max_push_constant_size = 128;
     pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: None,
@@ -238,7 +239,18 @@ fn setup_egui(
 pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
     let event_loop: EventLoop<RunnerMessage> = EventLoopBuilder::with_user_event().build();
     let window = create_window(&event_loop)?;
-    let instance = wgpu::Instance::default();
+
+    let instance = if cfg!(windows) {
+        let desc = wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            ..Default::default()
+        };
+
+        wgpu::Instance::new(desc)
+    } else {
+        wgpu::Instance::default()
+    };
+
     let surface =
         unsafe { instance.create_surface(&window) }.map_err(|_| InitializationError::Window)?;
 
@@ -271,5 +283,6 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
         wgpu_device: device,
         wgpu_queue: queue,
         gui_context,
+        instance,
     })
 }
