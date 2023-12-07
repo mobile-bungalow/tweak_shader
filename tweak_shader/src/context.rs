@@ -495,6 +495,7 @@ impl RenderContext {
             mip_level_count: Some(1),
             base_array_layer: 0,
             array_layer_count: Some(1),
+            plane: None,
         };
         Some(tex.create_view(&desc))
     }
@@ -573,7 +574,7 @@ impl RenderContext {
         let block_size = self
             .uniforms
             .format()
-            .block_size(Some(wgpu::TextureAspect::All))
+            .block_copy_size(Some(wgpu::TextureAspect::All))
             .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
         if !self
@@ -1077,7 +1078,7 @@ fn read_texture_contents_to_slice(
 ) {
     let block_size = texture
         .format()
-        .block_size(Some(wgpu::TextureAspect::All))
+        .block_copy_size(Some(wgpu::TextureAspect::All))
         .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
     let row_byte_ct = block_size * width;

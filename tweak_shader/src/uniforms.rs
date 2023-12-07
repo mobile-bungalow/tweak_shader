@@ -1,6 +1,6 @@
 use crate::input_type::*;
 use crate::parsing::DocumentDescriptor;
-use __core::num::NonZeroU32;
+use __core::{default, num::NonZeroU32};
 use bytemuck::{checked::cast_slice, offset_of};
 use naga::{AddressSpace, ResourceBinding, StorageAccess, StructMember};
 use wgpu::{naga, TextureFormat};
@@ -52,6 +52,7 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
     mip_level_count: Some(1),
     base_array_layer: 0,
     array_layer_count: Some(1),
+    plane: None,
 };
 
 #[derive(Debug)]
@@ -241,8 +242,12 @@ impl Uniforms {
             ))?;
         }
 
-        let place_holder_texture =
-            device.create_texture_with_data(queue, &txtr_desc(1, 1), &[0, 0, 0, 255u8]);
+        let place_holder_texture = device.create_texture_with_data(
+            queue,
+            &txtr_desc(1, 1),
+            Default::default(),
+            &[0, 0, 0, 255u8],
+        );
 
         let mut utility_block_data: GlobalData = bytemuck::Zeroable::zeroed();
         utility_block_data.mouse = [0.0, 0.0, -0.0, -0.0];
@@ -776,24 +781,28 @@ pub struct GlobalData {
 
 impl GlobalData {
     pub fn matches_layout_naga(it: impl Iterator<Item = (naga::TypeInner, usize)>) -> bool {
-        let f32_ty = naga::TypeInner::Scalar {
+        let f32_ty = naga::TypeInner::Scalar(naga::Scalar {
             width: 4,
             kind: naga::ScalarKind::Float,
-        };
-        let u32_ty = naga::TypeInner::Scalar {
+        });
+        let u32_ty = naga::TypeInner::Scalar(naga::Scalar {
             width: 4,
             kind: naga::ScalarKind::Uint,
-        };
+        });
 
         let vec4_ty = naga::TypeInner::Vector {
-            width: 4,
+            scalar: naga::Scalar {
+                width: 4,
+                kind: naga::ScalarKind::Float,
+            },
             size: naga::VectorSize::Quad,
-            kind: naga::ScalarKind::Float,
         };
         let vec3 = naga::TypeInner::Vector {
-            width: 4,
+            scalar: naga::Scalar {
+                width: 4,
+                kind: naga::ScalarKind::Float,
+            },
             size: naga::VectorSize::Tri,
-            kind: naga::ScalarKind::Float,
         };
         let self_iter = [
             (f32_ty.clone(), offset_of!(GlobalData, time)),
@@ -1221,8 +1230,12 @@ impl BindGroup {
             entries: &layout_entries,
         });
 
-        let place_holder_texture =
-            device.create_texture_with_data(queue, &txtr_desc(1, 1), &[0, 0, 0, 0]);
+        let place_holder_texture = device.create_texture_with_data(
+            queue,
+            &txtr_desc(1, 1),
+            Default::default(),
+            &[0, 0, 0, 0],
+        );
 
         let bind_group = Self::update_uniforms_helper(
             &mut binding_entries,
@@ -1608,6 +1621,8 @@ fn sample_kind(scalar: &naga::ScalarKind, format: &TextureFormat) -> wgpu::Textu
             filterable: !matches!(format, wgpu::TextureFormat::Rgba32Float),
         },
         naga::ScalarKind::Bool => wgpu::TextureSampleType::Uint,
+        // abstract types
+        _ => unreachable!(),
     }
 }
 

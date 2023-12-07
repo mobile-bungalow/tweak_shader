@@ -1,6 +1,5 @@
 [workspace]
 resolver = "2"
 members = [
-"tweak_shader",
-"tweak_runner",
+"tweak_shader"
 ]
