@@ -41,6 +41,7 @@ pub struct UiState {
     pub options: UiOptions,
     pub show_options: bool,
     pub input_panel_hidden: bool,
+    pub screen_shot_scheduled: Option<std::path::PathBuf>,
     // map of variable names to file names
     pub current_loaded_files: BTreeMap<String, String>,
     pub notifications: Vec<String>,
@@ -117,6 +118,10 @@ fn option_panel(ui_state: &mut UiState, message_sender: &mpsc::Sender<RunnerMess
                 ui_state.options.paused = !ui_state.options.paused
             }
         });
+
+        if ui.button("take screenshot").clicked() {
+            launch_screenshot_dialog(message_sender.clone());
+        }
 
         ui.horizontal(|ui| {
             if ui
@@ -357,6 +362,20 @@ pub fn diagnostic_message(ctx: &egui_winit::egui::Context, e: &str) {
                 );
             });
         });
+}
+
+fn launch_screenshot_dialog(sender: std::sync::mpsc::Sender<RunnerMessage>) {
+    std::thread::spawn(move || {
+        let file_path = tinyfiledialogs::save_file_dialog("select screen shot location", "/");
+
+        if let Some(path) = file_path {
+            let mut buf: std::path::PathBuf = path.into();
+            if buf.extension().is_none() {
+                buf.set_extension("png");
+            }
+            let _ = sender.send(RunnerMessage::ScreenShot(buf));
+        }
+    });
 }
 
 fn launch_audio_dialog(

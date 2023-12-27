@@ -147,6 +147,7 @@ pub enum RunnerMessage {
         width: f32,
         height: f32,
     },
+    ScreenShot(PathBuf),
     AspectChanged,
     ToggleTweakMenu,
     TogglePause,
@@ -465,6 +466,27 @@ impl App {
                     size.width,
                     size.height,
                 );
+
+                if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
+                    let mut vec = self.letter_box.render_to_vec(
+                        wgpu_queue,
+                        wgpu_device,
+                        size.width,
+                        size.height,
+                    );
+
+                    for chunk in vec.chunks_exact_mut(4) {
+                        // Swap the red and blue channels
+                        chunk.swap(0, 2);
+                    }
+
+                    let dynamic_image = image::DynamicImage::ImageRgba8(
+                        image::RgbaImage::from_raw(size.width, size.height, vec).unwrap(),
+                    );
+
+                    dynamic_image.save(path).unwrap();
+                    self.ui_state.screen_shot_scheduled = None;
+                }
             } else {
                 // Render the actual toy
                 self.current_shader_mut().encode_render(
@@ -475,6 +497,27 @@ impl App {
                     size.width,
                     size.height,
                 );
+
+                if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
+                    let mut vec = self.current_shader_mut().render_to_vec(
+                        wgpu_queue,
+                        wgpu_device,
+                        size.width,
+                        size.height,
+                    );
+
+                    for chunk in vec.chunks_exact_mut(4) {
+                        // Swap the red and blue channels
+                        chunk.swap(0, 2);
+                    }
+
+                    let dynamic_image = image::DynamicImage::ImageRgba8(
+                        image::RgbaImage::from_raw(size.width, size.height, vec).unwrap(),
+                    );
+
+                    dynamic_image.save(path).unwrap();
+                    self.ui_state.screen_shot_scheduled = None;
+                }
             }
         }
 
@@ -683,6 +726,9 @@ impl App {
 
     fn update(&mut self, message: RunnerMessage) {
         match message {
+            RunnerMessage::ScreenShot(p) => {
+                self.ui_state.screen_shot_scheduled = Some(p);
+            }
             RunnerMessage::AspectChanged => {
                 self.must_update_render_targets = true;
             }
