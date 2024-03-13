@@ -442,39 +442,43 @@ impl InputType {
         match self {
             InputType::Float(_) => {
                 *refl
-                    == TypeInner::Scalar {
+                    == TypeInner::Scalar(naga::Scalar {
                         kind: ScalarKind::Float,
                         width: 4,
-                    }
+                    })
             }
             InputType::Int(_, _) => {
                 *refl
-                    == TypeInner::Scalar {
+                    == TypeInner::Scalar(naga::Scalar {
                         kind: ScalarKind::Sint,
                         width: 4,
-                    }
+                    })
             }
             InputType::Point(_) => {
                 *refl
                     == TypeInner::Vector {
+                        scalar: naga::Scalar {
+                            kind: ScalarKind::Float,
+                            width: 4,
+                        },
                         size: naga::VectorSize::Bi,
-                        kind: ScalarKind::Float,
-                        width: 4,
                     }
             }
             InputType::Bool(_) | InputType::Event(_) => {
                 *refl
-                    == TypeInner::Scalar {
+                    == TypeInner::Scalar(naga::Scalar {
                         kind: ScalarKind::Sint,
                         width: 4,
-                    }
+                    })
             }
             InputType::Color(_) => {
                 *refl
                     == TypeInner::Vector {
+                        scalar: naga::Scalar {
+                            kind: ScalarKind::Float,
+                            width: 4,
+                        },
                         size: naga::VectorSize::Quad,
-                        kind: ScalarKind::Float,
-                        width: 4,
                     }
             }
             InputType::Image(_)

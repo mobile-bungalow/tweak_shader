@@ -1,7 +1,8 @@
 use egui_wgpu::{
-    renderer::ScreenDescriptor,
     wgpu::{self, CompositeAlphaMode},
+    ScreenDescriptor,
 };
+
 use egui_winit::{
     egui::{Color32, FontData, FontDefinitions},
     winit::{
@@ -19,6 +20,7 @@ use crate::app::RunnerMessage;
 pub struct GuiContext {
     pub egui_renderer: egui_wgpu::Renderer,
     pub egui_context: egui_winit::egui::Context,
+    pub id: egui_winit::egui::ViewportId,
     pub egui_state: egui_winit::State,
     pub egui_painter: egui_wgpu::winit::Painter,
     pub egui_screen_desc: ScreenDescriptor,
@@ -60,9 +62,9 @@ impl std::error::Error for InitializationError {}
 
 pub struct Resources {
     pub event_loop: EventLoop<RunnerMessage>,
-    pub window: Window,
+    pub window: std::sync::Arc<Window>,
     pub file_watcher: RecommendedWatcher,
-    pub wgpu_surface: wgpu::Surface,
+    pub wgpu_surface: wgpu::Surface<'static>,
     pub wgpu_surface_config: wgpu::SurfaceConfiguration,
     pub wgpu_adapter: wgpu::Adapter,
     pub wgpu_device: wgpu::Device,
@@ -94,13 +96,13 @@ fn request_adapter(
 fn create_device(
     adapter: &wgpu::Adapter,
 ) -> Result<(wgpu::Device, wgpu::Queue), InitializationError> {
-    let mut limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
-    limits.max_push_constant_size = 128;
+    let mut required_limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
+    required_limits.max_push_constant_size = 128;
     pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: None,
-            features: wgpu::Features::PUSH_CONSTANTS,
-            limits,
+            required_features: wgpu::Features::PUSH_CONSTANTS,
+            required_limits,
         },
         None,
     ))
@@ -126,6 +128,7 @@ fn configure_surface(
     };
 
     let wgpu_surface_config = wgpu::SurfaceConfiguration {
+        desired_maximum_frame_latency: 2,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: swapchain_format,
         width: size.width,
@@ -183,13 +186,11 @@ fn setup_file_watcher(
 }
 
 fn setup_egui(
-    window: &Window,
+    window: std::sync::Arc<Window>,
     device: &wgpu::Device,
     swapchain_format: &wgpu::TextureFormat,
 ) -> Result<GuiContext, InitializationError> {
     let egui_context = egui_winit::egui::Context::default();
-
-    let egui_state = State::new(egui_context.viewport_id(), window, None, None);
 
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
@@ -214,15 +215,20 @@ fn setup_egui(
         ..egui_winit::egui::Visuals::dark()
     });
 
+    let id = egui_context.viewport_id();
+    let egui_state = State::new(egui_context.clone(), id, &window, None, None);
+
     let mut egui_painter =
         egui_wgpu::winit::Painter::new(egui_wgpu::WgpuConfiguration::default(), 1, None, true);
 
-    pollster::block_on(egui_painter.set_window(egui_context.viewport_id(), Some(window)))
+    let size_in_pixels = [window.inner_size().width, window.inner_size().height];
+    let pixels_per_point = window.scale_factor() as f32;
+    pollster::block_on(egui_painter.set_window(id, Some(window)))
         .map_err(|_| InitializationError::EguiPainterSetupError)?;
 
     let egui_screen_desc = ScreenDescriptor {
-        size_in_pixels: [window.inner_size().width, window.inner_size().height],
-        pixels_per_point: window.scale_factor() as f32,
+        size_in_pixels,
+        pixels_per_point,
     };
 
     let egui_renderer = egui_wgpu::Renderer::new(device, *swapchain_format, None, 1);
@@ -230,6 +236,7 @@ fn setup_egui(
     Ok(GuiContext {
         egui_renderer,
         egui_context,
+        id,
         egui_state,
         egui_painter,
         egui_screen_desc,
@@ -237,7 +244,7 @@ fn setup_egui(
 }
 
 pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
-    let event_loop: EventLoop<RunnerMessage> = EventLoopBuilder::with_user_event().build();
+    let event_loop: EventLoop<RunnerMessage> = EventLoopBuilder::with_user_event().build().unwrap();
     let window = create_window(&event_loop)?;
 
     let instance = if cfg!(windows) {
@@ -251,8 +258,11 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
         wgpu::Instance::default()
     };
 
-    let surface =
-        unsafe { instance.create_surface(&window) }.map_err(|_| InitializationError::Window)?;
+    let window = std::sync::Arc::new(window);
+
+    let surface = instance
+        .create_surface(window.clone())
+        .map_err(|_| InitializationError::Window)?;
 
     let adapter = request_adapter(&instance, &surface)?;
     let (device, queue) = create_device(&adapter)?;
@@ -271,7 +281,7 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
     let wgpu_surface_config = configure_surface(&surface, &adapter, &device, size);
 
     let file_watcher = setup_file_watcher(path, &event_loop)?;
-    let gui_context = setup_egui(&window, &device, &wgpu_surface_config.format)?;
+    let gui_context = setup_egui(window.clone(), &device, &wgpu_surface_config.format)?;
 
     Ok(Resources {
         event_loop,

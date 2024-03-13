@@ -193,8 +193,8 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                         .using_resolution(adapter.limits()),
                 },
                 None,

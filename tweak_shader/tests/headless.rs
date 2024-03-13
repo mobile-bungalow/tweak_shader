@@ -695,16 +695,17 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             .await
             .expect("Failed to find an appropriate adapter")
     });
-    let mut limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
-    limits.max_push_constant_size = 128;
+    let mut required_limits =
+        wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+    required_limits.max_push_constant_size = 128;
 
     let (d, q) = pollster::block_on(async {
         adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::PUSH_CONSTANTS,
-                    limits,
+                    required_features: wgpu::Features::PUSH_CONSTANTS,
+                    required_limits,
                 },
                 None,
             )

@@ -1,6 +1,7 @@
 use app::{App, RunnerMessage};
 use egui_wgpu::wgpu;
-use egui_winit::winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
+use egui_winit::winit::event::{ElementState, KeyEvent, MouseButton};
+use egui_winit::winit::keyboard::{Key, NamedKey};
 use egui_winit::winit::{
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
@@ -56,94 +57,97 @@ fn main() {
     let mut last_frame_time = std::time::Instant::now();
     let mut resized = false;
 
-    event_loop.run(move |event, _, control_flow| {
-        let _ = (&wgpu_adapter, &wgpu_surface_config, &app);
-        if last_frame_time.elapsed() > target_frame_duration {
-            window.request_redraw();
-        }
-        control_flow.set_wait_until(std::time::Instant::now() + target_frame_duration);
-        match event {
-            // The file watcher and wgpu can push errors
-            Event::UserEvent(m) => app.queue_message(m),
-            Event::MainEventsCleared => {
-                app.process_messages();
-                app.update_pipeline(&wgpu_device, &wgpu_queue);
+    event_loop
+        .run(move |event, control_flow| {
+            let _ = (&wgpu_adapter, &wgpu_surface_config, &app);
+            if last_frame_time.elapsed() > target_frame_duration {
+                window.request_redraw();
             }
-            Event::WindowEvent { event, .. } => {
-                app.update_gui(&event);
-                match event {
-                    WindowEvent::KeyboardInput {
-                        input:
-                            KeyboardInput {
-                                virtual_keycode: Some(key),
-                                state: ElementState::Released,
-                                ..
-                            },
-                        ..
-                    } => match key {
-                        VirtualKeyCode::Escape => {
-                            app.queue_message(RunnerMessage::ToggleTweakMenu);
+            let cf = ControlFlow::WaitUntil(std::time::Instant::now() + target_frame_duration);
+            control_flow.set_control_flow(cf);
+            match event {
+                // The file watcher and wgpu can push errors
+                Event::UserEvent(m) => app.queue_message(m),
+                Event::AboutToWait => {
+                    app.process_messages();
+                    app.update_pipeline(&wgpu_device, &wgpu_queue);
+                }
+                Event::WindowEvent { event, .. } => {
+                    app.update_gui(&event, &window);
+                    match event {
+                        WindowEvent::KeyboardInput {
+                            event:
+                                KeyEvent {
+                                    logical_key: key,
+                                    state: ElementState::Released,
+                                    ..
+                                },
+                            ..
+                        } => match key {
+                            Key::Named(NamedKey::Escape) => {
+                                app.queue_message(RunnerMessage::ToggleTweakMenu);
+                            }
+                            Key::Named(NamedKey::Space) => {
+                                app.queue_message(RunnerMessage::TogglePause);
+                            }
+                            _ => {}
+                        },
+                        WindowEvent::MouseInput {
+                            state: mouse_state,
+                            button: MouseButton::Left,
+                            ..
+                        } => {
+                            if mouse_state == ElementState::Pressed {
+                                app.queue_message(RunnerMessage::MouseDown);
+                            } else {
+                                app.queue_message(RunnerMessage::MouseUp);
+                            }
                         }
-                        VirtualKeyCode::Space => {
-                            app.queue_message(RunnerMessage::TogglePause);
+                        WindowEvent::CursorMoved { position, .. } => {
+                            let size = window.inner_size();
+                            app.queue_message(RunnerMessage::MouseMove {
+                                x: position.x,
+                                y: position.y,
+                                w: size.width as f64,
+                                h: size.height as f64,
+                            });
+                        }
+                        WindowEvent::CloseRequested => control_flow.exit(),
+                        WindowEvent::Resized(size) => {
+                            wgpu_surface_config.width = size.width;
+                            wgpu_surface_config.height = size.height;
+                            resized = true;
+                            app.queue_message(RunnerMessage::Resized {
+                                width: wgpu_surface_config.width as f32,
+                                height: wgpu_surface_config.height as f32,
+                            });
+                        }
+                        WindowEvent::RedrawRequested => {
+                            if resized {
+                                wgpu_surface.configure(&wgpu_device, &wgpu_surface_config);
+                                resized = false;
+                            }
+                            let frame = wgpu_surface
+                                .get_current_texture()
+                                .expect("Failed to acquire next swap chain texture");
+
+                            let view = frame
+                                .texture
+                                .create_view(&wgpu::TextureViewDescriptor::default());
+
+                            app.render(&wgpu_device, &wgpu_queue, &view, &window);
+                            app.queue_message(RunnerMessage::RenderFinished);
+
+                            frame.present();
+                            last_frame_time = std::time::Instant::now();
                         }
                         _ => {}
-                    },
-                    WindowEvent::MouseInput {
-                        state: mouse_state,
-                        button: MouseButton::Left,
-                        ..
-                    } => {
-                        if mouse_state == ElementState::Pressed {
-                            app.queue_message(RunnerMessage::MouseDown);
-                        } else {
-                            app.queue_message(RunnerMessage::MouseUp);
-                        }
-                    }
-                    WindowEvent::CursorMoved { position, .. } => {
-                        let size = window.inner_size();
-                        app.queue_message(RunnerMessage::MouseMove {
-                            x: position.x,
-                            y: position.y,
-                            w: size.width as f64,
-                            h: size.height as f64,
-                        });
-                    }
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                    WindowEvent::Resized(size) => {
-                        wgpu_surface_config.width = size.width;
-                        wgpu_surface_config.height = size.height;
-                        resized = true;
-                        app.queue_message(RunnerMessage::Resized {
-                            width: wgpu_surface_config.width as f32,
-                            height: wgpu_surface_config.height as f32,
-                        });
-                    }
-                    _ => {}
-                };
-            }
-            Event::RedrawRequested(_) => {
-                if resized {
-                    wgpu_surface.configure(&wgpu_device, &wgpu_surface_config);
-                    resized = false;
+                    };
                 }
-                let frame = wgpu_surface
-                    .get_current_texture()
-                    .expect("Failed to acquire next swap chain texture");
-
-                let view = frame
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-
-                app.render(&wgpu_device, &wgpu_queue, &view, &window);
-                app.queue_message(RunnerMessage::RenderFinished);
-
-                frame.present();
-                last_frame_time = std::time::Instant::now();
+                _ => {}
             }
-            _ => {}
-        }
-    });
+        })
+        .unwrap();
 }
 
 fn read_file<P: AsRef<std::path::Path>>(file_path: P) -> io::Result<String> {
