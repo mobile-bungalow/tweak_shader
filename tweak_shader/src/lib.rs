@@ -120,6 +120,7 @@
 
 pub(crate) mod context;
 pub(crate) mod parsing;
+pub(crate) mod preprocessing;
 pub(crate) mod uniforms;
 
 /// This module provides typesafe wrapper for internal uniform buffer data.

@@ -1,4 +1,5 @@
 use crate::input_type::*;
+use crate::preprocessing;
 use crate::uniforms;
 use crate::VarName;
 use naga::front::glsl;
@@ -88,9 +89,19 @@ impl RenderContext {
             .defines
             .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
 
-        let naga_mod = frontend
+        let mut naga_mod = frontend
             .parse(&options, &stripped_src)
             .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?;
+
+        if cfg!(after_effects) {
+            if let Ok(mangled_mod) =
+                preprocessing::convert_output_to_ae_format(&stripped_src, format)
+            {
+                naga_mod = mangled_mod;
+            } else {
+                panic!("todo: come up with a better fallback!");
+            }
+        }
 
         let mut isf_pass_structure = vec![];
 

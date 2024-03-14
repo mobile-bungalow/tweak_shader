@@ -669,7 +669,11 @@ impl Uniforms {
             loop {
                 while field_iter.is_none() {
                     field_iter = match set_iter.next()? {
-                        BindingEntry::UniformBlock { inputs, .. } => Some(inputs.iter_mut()),
+                        BindingEntry::UniformBlock { inputs, .. } => Some(
+                            inputs
+                                .iter_mut()
+                                .filter(|(_, ty)| !matches!(ty, InputType::RawBytes(_))),
+                        ),
                         BindingEntry::Texture { input, name, .. } => {
                             if render_pass_targets.contains(name) {
                                 None
@@ -714,7 +718,11 @@ impl Uniforms {
             loop {
                 while field_iter.is_none() {
                     field_iter = match iter.next()? {
-                        BindingEntry::UniformBlock { inputs, .. } => Some(inputs.iter()),
+                        BindingEntry::UniformBlock { inputs, .. } => Some(
+                            inputs
+                                .iter()
+                                .filter(|(_, ty)| !matches!(ty, InputType::RawBytes(_))),
+                        ),
                         BindingEntry::Texture { input, name, .. } => {
                             if set_ref.contains(name) {
                                 None

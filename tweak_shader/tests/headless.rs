@@ -592,6 +592,71 @@ fn inputs_iter() {
     }
 }
 
+const NO_EXCESS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+
+#pragma utility_block(ShaderInputs)
+layout(set = 0, binding = 0) uniform ShaderInputs {
+    float time;       
+    float time_delta; 
+    float frame_rate; 
+    uint frame_index;  
+    vec4 mouse;       
+    vec4 date;        
+    vec3 resolution;  
+    uint pass_index;   
+};
+
+#pragma input(float, name="foo", default=0.0)
+layout(set = 1, binding = 0) uniform Ecco {
+    // unmapped
+    float bar;
+    float bar;
+    float bar;
+    float bar;
+    float foo;
+};
+
+layout(location = 0) out vec4 out_color; 
+
+
+void main()
+{
+    vec2 frag_flip = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
+    vec2 st = (frag_flip.xy / resolution.xy);
+    out_color = vec4(foo, sin(time), st.x, 1.0);
+}
+"#;
+
+#[test]
+fn unmapped_bindings() {
+    let (device, queue) = set_up_wgpu();
+    // this will panic if the pipeline can't be set up.
+    let mut unmapped = RenderContext::new(
+        NO_EXCESS,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    assert_eq!(1, unmapped.iter_inputs().count());
+    assert!(unmapped.get_input("nope").is_none());
+    assert!(matches!(
+        unmapped.get_input("bar").unwrap(),
+        tweak_shader::input_type::InputType::RawBytes(_)
+    ));
+
+    assert_eq!(1, unmapped.iter_inputs_mut().count());
+    assert!(unmapped.get_input_mut("nope").is_none());
+    assert!(matches!(
+        unmapped.get_input_mut("bar").unwrap().variant(),
+        tweak_shader::input_type::InputVariant::Bytes
+    ));
+}
+
 const LETTERBOX: &str = "
 #version 450
 

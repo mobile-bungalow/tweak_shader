@@ -27,6 +27,7 @@ version = "0.5.0"
 optional = true
 
 [dependencies]
+naga_oil = "0.13.0"
 wgpu = { version = "0.19.3", features = ["glsl", "naga-ir"] }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 nom = "7.1.3"
