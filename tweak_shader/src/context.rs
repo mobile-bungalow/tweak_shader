@@ -94,9 +94,7 @@ impl RenderContext {
             .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?;
 
         if cfg!(after_effects) {
-            if let Ok(mangled_mod) =
-                preprocessing::convert_output_to_ae_format(&stripped_src, format)
-            {
+            if let Ok(mangled_mod) = preprocessing::convert_output_to_ae_format(naga_mod, format) {
                 naga_mod = mangled_mod;
             } else {
                 panic!("todo: come up with a better fallback!");
