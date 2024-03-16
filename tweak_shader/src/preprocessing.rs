@@ -19,26 +19,15 @@ const TEXTURE_SAMPLING_FUNCTIONS: [&str; 7] = [
     "textureGrad",
 ];
 
-// Color space correction for u15 :(
-const SPACE_REDUCER: &str = " * 1.99996948242";
-
 struct EntryPointExitSwizzler {
     pub out_var: String,
-    pub space_reduction: &'static str,
 }
 
 // identify the end of the top level block, and find every block that ends in return;
 // inserting a swizzle statement at the end of it.
 impl EntryPointExitSwizzler {
     pub fn new(out_var: String, fmt: wgpu::TextureFormat) -> Self {
-        Self {
-            out_var,
-            space_reduction: if fmt == wgpu::TextureFormat::Rgba16Unorm {
-                SPACE_REDUCER
-            } else {
-                ""
-            },
-        }
+        Self { out_var }
     }
 }
 
@@ -57,8 +46,7 @@ impl VisitorMut for EntryPointExitSwizzler {
         }
         if let Some(index) = ret_index {
             let out_var = self.out_var.clone();
-            let space_reduction = self.space_reduction;
-            let ender = format!("{out_var} = {out_var}.argb{space_reduction};");
+            let ender = format!("{out_var} = {out_var}.argb;");
             let new_stmnt = glsl::syntax::Statement::parse(ender);
             if let Ok(end_stmnt) = new_stmnt {
                 block
@@ -164,13 +152,7 @@ impl VisitorMut for FormatSwizzler {
                         statement.visit_mut(&mut swizzler);
                         let out_var = swizzler.out_var;
 
-                        let space_reduction = if self.fmt == wgpu::TextureFormat::Rgba16Unorm {
-                            SPACE_REDUCER
-                        } else {
-                            ""
-                        };
-
-                        let ender = format!("{out_var} = {out_var}.argb{space_reduction};");
+                        let ender = format!("{out_var} = {out_var}.argb;");
                         let new_stmnt = glsl::syntax::Statement::parse(ender);
                         if let Ok(end_stmnt) = new_stmnt {
                             statement.statement_list.push(end_stmnt);
@@ -189,12 +171,17 @@ pub fn convert_output_to_ae_format(
     module: &String,
     fmt: wgpu::TextureFormat,
 ) -> Result<naga::Module, Vec<naga::front::glsl::Error>> {
-    let mut swiz = FormatSwizzler::new(fmt);
-    let mut expr = glsl::syntax::TranslationUnit::parse(module).unwrap();
-    expr.visit_mut(&mut swiz);
+    let output = if fmt != wgpu::TextureFormat::Rgba16Uint {
+        let mut swiz = FormatSwizzler::new(fmt);
+        let mut expr = glsl::syntax::TranslationUnit::parse(module).unwrap();
+        expr.visit_mut(&mut swiz);
 
-    let mut output = String::new();
-    glsl::transpiler::glsl::show_translation_unit(&mut output, &expr);
+        let mut output = String::new();
+        glsl::transpiler::glsl::show_translation_unit(&mut output, &expr);
+        output
+    } else {
+        module.clone()
+    };
 
     let mut options = Options::from(naga::ShaderStage::Fragment);
     options
@@ -207,7 +194,6 @@ pub fn convert_output_to_ae_format(
 
 #[cfg(test)]
 mod test {
-    use std::default;
 
     use super::*;
     use pretty_assertions::assert_eq;
@@ -301,43 +287,6 @@ out_color = out_color.argb;
 }
 ";
         let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rg8Unorm);
-        let mut expr = glsl::syntax::TranslationUnit::parse(pre).unwrap();
-        expr.visit_mut(&mut swiz);
-        let mut string = String::new();
-        glsl::transpiler::glsl::show_translation_unit(&mut string, &expr);
-        assert_eq!(post, &string);
-    }
-
-    #[test]
-    fn space_reduction() {
-        let pre = "
-    layout(location = 0) out vec4 out_color; 
-
-    void main() { 
-        if ( 1.0 == 1.0) {
-            return;
-        } else {
-            return;
-        }
-        out_color = vec4(1.);
-    }";
-
-        let post = "layout (location = 0) out vec4 out_color;
-void main() {
-if (1.==1.) {
-{
-out_color = out_color.argb*1.9999695;
-return ;
-}
-} else {
-out_color = out_color.argb*1.9999695;
-return ;
-}
-out_color = vec4(1.);
-out_color = out_color.argb*1.9999695;
-}
-";
-        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rgba16Unorm);
         let mut expr = glsl::syntax::TranslationUnit::parse(pre).unwrap();
         expr.visit_mut(&mut swiz);
         let mut string = String::new();
