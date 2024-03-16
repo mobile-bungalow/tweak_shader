@@ -241,8 +241,12 @@ impl Uniforms {
             ))?;
         }
 
-        let place_holder_texture =
-            device.create_texture_with_data(queue, &txtr_desc(1, 1), &[0, 0, 0, 255u8]);
+        let place_holder_texture = device.create_texture_with_data(
+            queue,
+            &txtr_desc(1, 1),
+            Default::default(),
+            &[0, 0, 0, 255u8],
+        );
 
         let mut utility_block_data: GlobalData = bytemuck::Zeroable::zeroed();
         utility_block_data.mouse = [0.0, 0.0, -0.0, -0.0];
@@ -473,7 +477,7 @@ impl Uniforms {
             ) if *h == height && *w == width && tex.format() == *format => {
                 let block_size = tex
                     .format()
-                    .block_size(Some(wgpu::TextureAspect::All))
+                    .block_copy_size(Some(wgpu::TextureAspect::All))
                     .expect(
                         "It seems like you are trying to render to a Depth Stencil. Stop that.",
                     );
@@ -499,7 +503,7 @@ impl Uniforms {
 
                 let block_size = tex
                     .format()
-                    .block_size(Some(wgpu::TextureAspect::All))
+                    .block_copy_size(Some(wgpu::TextureAspect::All))
                     .expect(
                         "It seems like you are trying to render to a Depth Stencil. Stop that.",
                     );
@@ -665,7 +669,11 @@ impl Uniforms {
             loop {
                 while field_iter.is_none() {
                     field_iter = match set_iter.next()? {
-                        BindingEntry::UniformBlock { inputs, .. } => Some(inputs.iter_mut()),
+                        BindingEntry::UniformBlock { inputs, .. } => Some(
+                            inputs
+                                .iter_mut()
+                                .filter(|(_, ty)| !matches!(ty, InputType::RawBytes(_))),
+                        ),
                         BindingEntry::Texture { input, name, .. } => {
                             if render_pass_targets.contains(name) {
                                 None
@@ -710,7 +718,11 @@ impl Uniforms {
             loop {
                 while field_iter.is_none() {
                     field_iter = match iter.next()? {
-                        BindingEntry::UniformBlock { inputs, .. } => Some(inputs.iter()),
+                        BindingEntry::UniformBlock { inputs, .. } => Some(
+                            inputs
+                                .iter()
+                                .filter(|(_, ty)| !matches!(ty, InputType::RawBytes(_))),
+                        ),
                         BindingEntry::Texture { input, name, .. } => {
                             if set_ref.contains(name) {
                                 None
@@ -776,24 +788,28 @@ pub struct GlobalData {
 
 impl GlobalData {
     pub fn matches_layout_naga(it: impl Iterator<Item = (naga::TypeInner, usize)>) -> bool {
-        let f32_ty = naga::TypeInner::Scalar {
+        let f32_ty = naga::TypeInner::Scalar(naga::Scalar {
             width: 4,
             kind: naga::ScalarKind::Float,
-        };
-        let u32_ty = naga::TypeInner::Scalar {
+        });
+        let u32_ty = naga::TypeInner::Scalar(naga::Scalar {
             width: 4,
             kind: naga::ScalarKind::Uint,
-        };
+        });
 
         let vec4_ty = naga::TypeInner::Vector {
-            width: 4,
+            scalar: naga::Scalar {
+                kind: naga::ScalarKind::Float,
+                width: 4,
+            },
             size: naga::VectorSize::Quad,
-            kind: naga::ScalarKind::Float,
         };
         let vec3 = naga::TypeInner::Vector {
-            width: 4,
+            scalar: naga::Scalar {
+                kind: naga::ScalarKind::Float,
+                width: 4,
+            },
             size: naga::VectorSize::Tri,
-            kind: naga::ScalarKind::Float,
         };
         let self_iter = [
             (f32_ty.clone(), offset_of!(GlobalData, time)),
@@ -1221,8 +1237,12 @@ impl BindGroup {
             entries: &layout_entries,
         });
 
-        let place_holder_texture =
-            device.create_texture_with_data(queue, &txtr_desc(1, 1), &[0, 0, 0, 0]);
+        let place_holder_texture = device.create_texture_with_data(
+            queue,
+            &txtr_desc(1, 1),
+            Default::default(),
+            &[0, 0, 0, 0],
+        );
 
         let bind_group = Self::update_uniforms_helper(
             &mut binding_entries,
@@ -1608,6 +1628,7 @@ fn sample_kind(scalar: &naga::ScalarKind, format: &TextureFormat) -> wgpu::Textu
             filterable: !matches!(format, wgpu::TextureFormat::Rgba32Float),
         },
         naga::ScalarKind::Bool => wgpu::TextureSampleType::Uint,
+        naga::ScalarKind::AbstractInt | naga::ScalarKind::AbstractFloat => unreachable!(),
     }
 }
 

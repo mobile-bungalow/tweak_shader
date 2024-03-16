@@ -1,4 +1,5 @@
 use crate::input_type::*;
+use crate::preprocessing;
 use crate::uniforms;
 use crate::VarName;
 use naga::front::glsl;
@@ -74,8 +75,6 @@ impl RenderContext {
             )
             .collect();
 
-        let mut frontend = Frontend::default();
-
         let stripped_src: String = source
             .lines()
             .filter(|line| !line.trim().starts_with("#pragma"))
@@ -88,9 +87,16 @@ impl RenderContext {
             .defines
             .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
 
-        let naga_mod = frontend
-            .parse(&options, &stripped_src)
-            .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?;
+        let mut frontend = Frontend::default();
+
+        let naga_mod = if cfg!(feature = "after_effects") {
+            preprocessing::convert_output_to_ae_format(&stripped_src, format)
+                .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?
+        } else {
+            frontend
+                .parse(&options, &stripped_src)
+                .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?
+        };
 
         let mut isf_pass_structure = vec![];
 
@@ -573,7 +579,7 @@ impl RenderContext {
         let block_size = self
             .uniforms
             .format()
-            .block_size(Some(wgpu::TextureAspect::All))
+            .block_copy_size(Some(wgpu::TextureAspect::All))
             .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
         if !self
@@ -1077,7 +1083,7 @@ fn read_texture_contents_to_slice(
 ) {
     let block_size = texture
         .format()
-        .block_size(Some(wgpu::TextureAspect::All))
+        .block_copy_size(Some(wgpu::TextureAspect::All))
         .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
     let row_byte_ct = block_size * width;
