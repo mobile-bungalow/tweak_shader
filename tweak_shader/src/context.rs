@@ -75,8 +75,6 @@ impl RenderContext {
             )
             .collect();
 
-        let mut frontend = Frontend::default();
-
         let stripped_src: String = source
             .lines()
             .filter(|line| !line.trim().starts_with("#pragma"))
@@ -89,19 +87,16 @@ impl RenderContext {
             .defines
             .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
 
-        let mut naga_mod = frontend
-            .parse(&options, &stripped_src)
-            .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?;
+        let mut frontend = Frontend::default();
 
-        if cfg!(after_effects) {
-            if let Ok(mangled_mod) =
-                preprocessing::convert_output_to_ae_format(&stripped_src, format)
-            {
-                naga_mod = mangled_mod;
-            } else {
-                panic!("todo: come up with a better fallback!");
-            }
-        }
+        let naga_mod = if cfg!(feature = "after_effects") {
+            preprocessing::convert_output_to_ae_format(&stripped_src, format)
+                .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?
+        } else {
+            frontend
+                .parse(&options, &stripped_src)
+                .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?
+        };
 
         let mut isf_pass_structure = vec![];
 

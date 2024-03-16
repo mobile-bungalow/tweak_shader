@@ -91,7 +91,7 @@ fn basic_frag() {
 
     basic.update_time(1.0);
     let time_1_bytes = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
-    //write_texture_to_png(time_1_bytes, "basic_time_1.png");
+
     assert!(approximately_equivalent(
         &time_1_bytes,
         &png_pixels!("./resources/basic_time_1.png")
