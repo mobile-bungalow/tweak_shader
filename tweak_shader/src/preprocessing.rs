@@ -19,15 +19,26 @@ const TEXTURE_SAMPLING_FUNCTIONS: [&str; 7] = [
     "textureGrad",
 ];
 
+// Color space correction for u15 :(
+const SPACE_REDUCER: &str = " * 1.99996948242";
+
 struct EntryPointExitSwizzler {
     pub out_var: String,
+    pub space_reduction: &'static str,
 }
 
 // identify the end of the top level block, and find every block that ends in return;
 // inserting a swizzle statement at the end of it.
 impl EntryPointExitSwizzler {
-    pub fn new(out_var: String) -> Self {
-        Self { out_var }
+    pub fn new(out_var: String, fmt: wgpu::TextureFormat) -> Self {
+        Self {
+            out_var,
+            space_reduction: if fmt == wgpu::TextureFormat::Rgba16Unorm {
+                SPACE_REDUCER
+            } else {
+                ""
+            },
+        }
     }
 }
 
@@ -46,7 +57,8 @@ impl VisitorMut for EntryPointExitSwizzler {
         }
         if let Some(index) = ret_index {
             let out_var = self.out_var.clone();
-            let ender = format!("{out_var} = {out_var}.argb;");
+            let space_reduction = self.space_reduction;
+            let ender = format!("{out_var} = {out_var}.argb{space_reduction};");
             let new_stmnt = glsl::syntax::Statement::parse(ender);
             if let Ok(end_stmnt) = new_stmnt {
                 block
@@ -59,11 +71,13 @@ impl VisitorMut for EntryPointExitSwizzler {
     }
 }
 
-struct FormatSwizzler {}
+struct FormatSwizzler {
+    fmt: wgpu::TextureFormat,
+}
 
 impl FormatSwizzler {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(fmt: wgpu::TextureFormat) -> Self {
+        Self { fmt }
     }
 }
 
@@ -131,7 +145,7 @@ impl VisitorMut for FormatSwizzler {
                 )) {
                     let mut string = String::new();
                     glsl::transpiler::glsl::show_identifier(&mut string, name);
-                    exit_swiz = Some(EntryPointExitSwizzler::new(string));
+                    exit_swiz = Some(EntryPointExitSwizzler::new(string, self.fmt));
                     break;
                 }
             }
@@ -149,7 +163,14 @@ impl VisitorMut for FormatSwizzler {
                     if string == "main" {
                         statement.visit_mut(&mut swizzler);
                         let out_var = swizzler.out_var;
-                        let ender = format!("{out_var} = {out_var}.argb;");
+
+                        let space_reduction = if self.fmt == wgpu::TextureFormat::Rgba16Unorm {
+                            SPACE_REDUCER
+                        } else {
+                            ""
+                        };
+
+                        let ender = format!("{out_var} = {out_var}.argb{space_reduction};");
                         let new_stmnt = glsl::syntax::Statement::parse(ender);
                         if let Ok(end_stmnt) = new_stmnt {
                             statement.statement_list.push(end_stmnt);
@@ -166,9 +187,9 @@ impl VisitorMut for FormatSwizzler {
 
 pub fn convert_output_to_ae_format(
     module: &String,
-    _fmt: wgpu::TextureFormat,
+    fmt: wgpu::TextureFormat,
 ) -> Result<naga::Module, Vec<naga::front::glsl::Error>> {
-    let mut swiz = FormatSwizzler::new();
+    let mut swiz = FormatSwizzler::new(fmt);
     let mut expr = glsl::syntax::TranslationUnit::parse(module).unwrap();
     expr.visit_mut(&mut swiz);
 
@@ -186,12 +207,14 @@ pub fn convert_output_to_ae_format(
 
 #[cfg(test)]
 mod test {
+    use std::default;
+
     use super::*;
     use pretty_assertions::assert_eq;
     #[test]
     fn visit_single_expression() {
         let pre = "vec3 test = vec3(1.);\n";
-        let mut swiz = FormatSwizzler::new();
+        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rgba8Unorm);
         let mut expr = glsl::syntax::Statement::parse(pre).unwrap();
         expr.visit_mut(&mut swiz);
         let mut string = String::new();
@@ -203,7 +226,7 @@ mod test {
     fn visit_sampler_simple() {
         let pre = "vec3 test = texture(sampler2D(image, sampler), vec2(1., 1.));\n";
         let post = "vec3 test = texture(sampler2D(image, sampler), vec2(1., 1.)).gbar;\n";
-        let mut swiz = FormatSwizzler::new();
+        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rgba8Unorm);
         let mut expr = glsl::syntax::Statement::parse(pre).unwrap();
         expr.visit_mut(&mut swiz);
         let mut string = String::new();
@@ -215,7 +238,7 @@ mod test {
     fn visit_sampler() {
         let pre = "vec3 test = texture(sampler2D(image, sampler), vec2(1., 1.)).x;\n";
         let post = "vec3 test = texture(sampler2D(image, sampler), vec2(1., 1.)).gbar.x;\n";
-        let mut swiz = FormatSwizzler::new();
+        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rgba8Unorm);
         let mut expr = glsl::syntax::Statement::parse(pre).unwrap();
         expr.visit_mut(&mut swiz);
         let mut string = String::new();
@@ -227,7 +250,7 @@ mod test {
     fn two_levels_deep() {
         let pre = "vec3 test = texture(sampler2D(image, sampler), textureLod(sampler2D(image_2, sampler), vec2(1., 1.)).xy).x;\n";
         let post = "vec3 test = texture(sampler2D(image, sampler), textureLod(sampler2D(image_2, sampler), vec2(1., 1.)).gbar.xy).gbar.x;\n";
-        let mut swiz = FormatSwizzler::new();
+        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rgba8Unorm);
         let mut expr = glsl::syntax::Statement::parse(pre).unwrap();
         expr.visit_mut(&mut swiz);
         let mut string = String::new();
@@ -240,7 +263,7 @@ mod test {
         let pre =
             "layout(location = 0) out vec4 out_color; void main() { out_color = vec4(1.); } \n";
         let post= "layout (location = 0) out vec4 out_color;\nvoid main() {\nout_color = vec4(1.);\nout_color = out_color.argb;\n}\n";
-        let mut swiz = FormatSwizzler::new();
+        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rgba8Unorm);
         let mut expr = glsl::syntax::TranslationUnit::parse(pre).unwrap();
         expr.visit_mut(&mut swiz);
         let mut string = String::new();
@@ -277,7 +300,44 @@ out_color = vec4(1.);
 out_color = out_color.argb;
 }
 ";
-        let mut swiz = FormatSwizzler::new();
+        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rg8Unorm);
+        let mut expr = glsl::syntax::TranslationUnit::parse(pre).unwrap();
+        expr.visit_mut(&mut swiz);
+        let mut string = String::new();
+        glsl::transpiler::glsl::show_translation_unit(&mut string, &expr);
+        assert_eq!(post, &string);
+    }
+
+    #[test]
+    fn space_reduction() {
+        let pre = "
+    layout(location = 0) out vec4 out_color; 
+
+    void main() { 
+        if ( 1.0 == 1.0) {
+            return;
+        } else {
+            return;
+        }
+        out_color = vec4(1.);
+    }";
+
+        let post = "layout (location = 0) out vec4 out_color;
+void main() {
+if (1.==1.) {
+{
+out_color = out_color.argb*1.9999695;
+return ;
+}
+} else {
+out_color = out_color.argb*1.9999695;
+return ;
+}
+out_color = vec4(1.);
+out_color = out_color.argb*1.9999695;
+}
+";
+        let mut swiz = FormatSwizzler::new(wgpu::TextureFormat::Rgba16Unorm);
         let mut expr = glsl::syntax::TranslationUnit::parse(pre).unwrap();
         expr.visit_mut(&mut swiz);
         let mut string = String::new();
