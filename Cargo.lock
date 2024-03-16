@@ -1034,6 +1034,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "glsl"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "577ac945ce66a4b7004c6e2807f517f94ef027dda89df578abe1fbb979d22f49"
+dependencies = [
+ "nom",
+]
+
+[[package]]
 name = "glutin_wgl_sys"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2634,6 +2643,7 @@ dependencies = [
  "bytemuck",
  "ffmpeg-next",
  "futures-intrusive",
+ "glsl",
  "image",
  "nom",
  "pollster",

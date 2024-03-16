@@ -663,7 +663,6 @@ const LETTERBOX: &str = "
 #pragma input(image, name=image)
 layout(set=0, binding=1) uniform sampler default_sampler;
 layout(set=0, binding=2) uniform texture2D image;
-
 layout(location = 0) out vec4 out_color; 
 
 void main() {
