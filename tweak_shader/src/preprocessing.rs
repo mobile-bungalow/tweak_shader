@@ -76,7 +76,7 @@ impl VisitorMut for FormatSwizzler {
                 }
 
                 let mut string = String::new();
-                glsl::transpiler::glsl::show_function_identifier(&mut string, &id);
+                glsl::transpiler::glsl::show_function_identifier(&mut string, id);
                 if TEXTURE_SAMPLING_FUNCTIONS.contains(&string.as_str()) {
                     let clone = e.clone();
                     let swizzed = Expr::Dot(clone.into(), glsl::syntax::Identifier("gbar".into()));
@@ -130,7 +130,7 @@ impl VisitorMut for FormatSwizzler {
                     glsl::syntax::StorageQualifier::Out,
                 )) {
                     let mut string = String::new();
-                    glsl::transpiler::glsl::show_identifier(&mut string, &name);
+                    glsl::transpiler::glsl::show_identifier(&mut string, name);
                     exit_swiz = Some(EntryPointExitSwizzler::new(string));
                     break;
                 }
@@ -145,7 +145,7 @@ impl VisitorMut for FormatSwizzler {
                 }) = item
                 {
                     let mut string = String::new();
-                    glsl::transpiler::glsl::show_identifier(&mut string, &name);
+                    glsl::transpiler::glsl::show_identifier(&mut string, name);
                     if string == "main" {
                         statement.visit_mut(&mut swizzler);
                         let out_var = swizzler.out_var;
