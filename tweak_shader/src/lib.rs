@@ -120,7 +120,7 @@
 
 pub(crate) mod context;
 pub(crate) mod parsing;
-#[cfg(features = "after_effects")]
+#[cfg(feature = "after_effects")]
 pub(crate) mod preprocessing;
 pub(crate) mod uniforms;
 

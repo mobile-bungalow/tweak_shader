@@ -53,7 +53,7 @@ impl RenderContext {
     /// may throw a validation error to the `device`, if you are not certain
     /// whether or not you are passing in valid shaders you should handles these
     /// by pushing the proper error scopes.
-    #[cfg(featues = "after_effects")]
+    #[cfg(feature = "after_effects")]
     pub fn new_argb_preprocessed<Src: AsRef<str>>(
         source: Src,
         format: wgpu::TextureFormat,
@@ -118,13 +118,13 @@ impl RenderContext {
         let mut frontend = Frontend::default();
 
         let naga_mod = if argb_format_prepocessing {
-            #[cfg(features = "after_effects")]
+            #[cfg(feature = "after_effects")]
             {
-                crate::preprocessing::convert_output_to_ae_format(&stripped_src, format).map_err(
-                    |e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)),
-                )?
+                crate::preprocessing::convert_output_to_argb_format(&stripped_src).map_err(|e| {
+                    Error::ShaderCompilationFailed(display_errors(&e, &stripped_src))
+                })?
             }
-            #[cfg(not(features = "after_effects"))]
+            #[cfg(not(feature = "after_effects"))]
             {
                 frontend.parse(&options, &stripped_src).map_err(|e| {
                     Error::ShaderCompilationFailed(display_errors(&e, &stripped_src))

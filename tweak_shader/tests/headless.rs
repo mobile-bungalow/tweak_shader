@@ -98,6 +98,36 @@ fn basic_frag() {
     ));
 }
 
+#[cfg(feature = "after_effects")]
+#[test]
+fn basic_frag_argb() {
+    let (device, queue) = set_up_wgpu();
+
+    let mut basic = RenderContext::new_argb_preprocessed(
+        BASIC_SRC,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
+    let time_0_bytes = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    assert!(approximately_equivalent(
+        &time_0_bytes,
+        &png_pixels!("./resources/argb_basic.png")
+    ));
+
+    basic.update_time(1.0);
+    let time_1_bytes = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+    write_texture_to_png(&time_1_bytes, "RETRY.png", TEST_RENDER_DIM, TEST_RENDER_DIM).unwrap();
+    assert!(approximately_equivalent(
+        &time_1_bytes,
+        &png_pixels!("./resources/argb_basic_time_1.png")
+    ));
+}
+
 // reading and writing to non256 aligned textures should not panic
 #[test]
 fn misaligned() {
