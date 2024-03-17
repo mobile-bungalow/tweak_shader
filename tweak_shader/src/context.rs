@@ -602,6 +602,26 @@ impl RenderContext {
         .unwrap()
     }
 
+    /// returns an instance of the render context in a default error state
+    /// displaying a test card  in ARGB format, Useful when displaying errors to the user
+    /// if you don't want to bail the program and have no visual fallback.
+    #[cfg(feature = "after_effects")]
+    pub fn error_state_argb(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        output_format: wgpu::TextureFormat,
+    ) -> Self {
+        // If we can't work with the provided shader open an error view
+        // and print the errors on the watched files until they work
+        Self::new_argb_preprocessed(
+            include_str!("../resources/error.glsl"),
+            output_format,
+            device,
+            queue,
+        )
+        .unwrap()
+    }
+
     /// Renders the shader at provided resolution and writes the result to a vector
     /// in the texture format that the context was configured with.
     /// ## Warning!
