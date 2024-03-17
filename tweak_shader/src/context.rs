@@ -1,5 +1,4 @@
 use crate::input_type::*;
-use crate::preprocessing;
 use crate::uniforms;
 use crate::VarName;
 use naga::front::glsl;
@@ -41,6 +40,35 @@ impl RenderContext {
         format: wgpu::TextureFormat,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+    ) -> Result<Self, Error> {
+        Self::new_inner(source, format, device, queue, false)
+    }
+
+    /// Creates a new [RenderContext] with a pipeline.
+    /// Preprocesses the passed in shader file such that it outputs ARGB format.
+    /// All texture sampling functions are also swizzled, such that any texture lookups
+    /// are swizzled to RGBA from ARGB before the user has access to them.
+    ///
+    /// Warning:
+    /// may throw a validation error to the `device`, if you are not certain
+    /// whether or not you are passing in valid shaders you should handles these
+    /// by pushing the proper error scopes.
+    #[cfg(featues = "after_effects")]
+    pub fn new_argb_preprocessed<Src: AsRef<str>>(
+        source: Src,
+        format: wgpu::TextureFormat,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Self, Error> {
+        Self::new_inner(source, format, device, queue, true)
+    }
+
+    fn new_inner<Src: AsRef<str>>(
+        source: Src,
+        format: wgpu::TextureFormat,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        argb_format_prepocessing: bool,
     ) -> Result<Self, Error> {
         let source = source.as_ref();
 
@@ -89,9 +117,19 @@ impl RenderContext {
 
         let mut frontend = Frontend::default();
 
-        let naga_mod = if cfg!(feature = "after_effects") {
-            preprocessing::convert_output_to_ae_format(&stripped_src, format)
-                .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?
+        let naga_mod = if argb_format_prepocessing {
+            #[cfg(features = "after_effects")]
+            {
+                crate::preprocessing::convert_output_to_ae_format(&stripped_src, format).map_err(
+                    |e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)),
+                )?
+            }
+            #[cfg(not(features = "after_effects"))]
+            {
+                frontend.parse(&options, &stripped_src).map_err(|e| {
+                    Error::ShaderCompilationFailed(display_errors(&e, &stripped_src))
+                })?
+            }
         } else {
             frontend
                 .parse(&options, &stripped_src)

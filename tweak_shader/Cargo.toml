@@ -10,7 +10,7 @@ description = "A simple wgpu helper library for building flexible screen shaders
 
 [features]
 default = []
-after_effects = []
+after_effects = ["glsl"]
 audio = ["rodio", "rustfft"]
 video = ["ffmpeg-next"]
 
@@ -24,7 +24,7 @@ optional = true
 
 
 [dependencies]
-glsl = { version = "7.0.0", default-features = false }
+glsl = { version = "7.0.0", features = [], optional = true }
 wgpu = { version = "0.19.3", features = ["glsl", "naga-ir"] }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 nom = "7.1.3"
