@@ -100,6 +100,20 @@ fn basic_frag() {
 
 #[cfg(feature = "after_effects")]
 #[test]
+fn pre_processing_hiccups_repro() {
+    let (device, queue) = set_up_wgpu();
+
+    let mut basic = RenderContext::new_argb_preprocessed(
+        include_str!("../../tweak_shader_examples/twister.fs"),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+}
+
+#[cfg(feature = "after_effects")]
+#[test]
 fn basic_frag_argb() {
     let (device, queue) = set_up_wgpu();
 

@@ -9,6 +9,26 @@ use glsl::visitor::VisitorMut;
 use naga::front::glsl::{Frontend, Options};
 use wgpu::naga;
 
+pub fn convert_output_to_argb_format(
+    module: &String,
+) -> Result<naga::Module, Vec<naga::front::glsl::Error>> {
+    let mut swiz = FormatSwizzler::new();
+    let mut expr = glsl::syntax::TranslationUnit::parse(module).unwrap();
+    expr.visit_mut(&mut swiz);
+
+    let mut output = String::new();
+    glsl::transpiler::glsl::show_translation_unit(&mut output, &expr);
+
+    let mut options = Options::from(naga::ShaderStage::Fragment);
+    options
+        .defines
+        .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
+
+    eprintln!("{output}");
+    let mut frontend = Frontend::default();
+    frontend.parse(&options, &output)
+}
+
 const TEXTURE_SAMPLING_FUNCTIONS: [&str; 7] = [
     "texture",
     "textureOffset",
@@ -163,25 +183,6 @@ impl VisitorMut for FormatSwizzler {
 
         glsl::visitor::Visit::Children
     }
-}
-
-pub fn convert_output_to_argb_format(
-    module: &String,
-) -> Result<naga::Module, Vec<naga::front::glsl::Error>> {
-    let mut swiz = FormatSwizzler::new();
-    let mut expr = glsl::syntax::TranslationUnit::parse(module).unwrap();
-    expr.visit_mut(&mut swiz);
-
-    let mut output = String::new();
-    glsl::transpiler::glsl::show_translation_unit(&mut output, &expr);
-
-    let mut options = Options::from(naga::ShaderStage::Fragment);
-    options
-        .defines
-        .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
-
-    let mut frontend = Frontend::default();
-    frontend.parse(&options, &output)
 }
 
 #[cfg(test)]

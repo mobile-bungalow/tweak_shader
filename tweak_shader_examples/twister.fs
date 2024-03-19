@@ -112,8 +112,9 @@ float height(in vec2 a)
 		h += 0.2 * baseh(a);
 	}
 
-	if (ADDNOISE != 0)
-		h += 0.06 * vnoiseh2(NOISESCALE * a);
+	if (ADDNOISE != 0) {
+    h += 0.06 * vnoiseh2(NOISESCALE * a);
+  }
 	return h;
 }
 
@@ -124,8 +125,9 @@ vec3 normal(in vec2 a)
 	{
 		n += basen(a);
 	}
-	if (ADDNOISE != 0)
-		n += 0.25 * vnoisen2(NOISESCALE * a);
+	if (ADDNOISE != 0) {
+		 n += 0.25 * vnoisen2(NOISESCALE * a);
+  }
 	return normalize(n);
 }
 void run(out float _a, inout vec2 _p, in vec2 uv)
@@ -186,8 +188,7 @@ void main()
   float iTime = time * time_scale;
 	vec3 l = -normalize(vec3(cos(iTime), sin(-iTime), 1.0));
 	float ndotl = max(0.0, dot(n, l));
-	c = vec3(0.50, 0.35, 0.20) + albedo.xyz +
-		+vec3(0.60, 0.70, 0.80) * ndotl * ndotl;
+	c = vec3(0.50, 0.35, 0.20) + albedo.xyz + vec3(0.60, 0.70, 0.80) * ndotl * ndotl;
 	c *= c * step(a, 0.5 * PI);
 	out_color = vec4(c, 1.0);
 }
