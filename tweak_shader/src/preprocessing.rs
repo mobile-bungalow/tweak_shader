@@ -24,7 +24,6 @@ pub fn convert_output_to_argb_format(
         .defines
         .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
 
-    eprintln!("{output}");
     let mut frontend = Frontend::default();
     frontend.parse(&options, &output)
 }
