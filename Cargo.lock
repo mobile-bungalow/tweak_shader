@@ -2621,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "tweak_shader"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bytemuck",
  "ffmpeg-next",

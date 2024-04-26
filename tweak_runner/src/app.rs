@@ -468,12 +468,12 @@ impl App {
                 );
 
                 if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
-                    let mut vec = self.letter_box.render_to_vec(
-                        wgpu_queue,
-                        wgpu_device,
-                        size.width,
-                        size.height,
-                    );
+                    let mut vec = if self.ui_state.options.use_screen_size_for_screenshots {
+                        self.letter_box.render_to_vec(wgpu_queue, wgpu_device, w, h)
+                    } else {
+                        self.current_shader_mut()
+                            .render_to_vec(wgpu_queue, wgpu_device, w, h)
+                    };
 
                     for chunk in vec.chunks_exact_mut(4) {
                         // Swap the red and blue channels
@@ -481,7 +481,7 @@ impl App {
                     }
 
                     let dynamic_image = image::DynamicImage::ImageRgba8(
-                        image::RgbaImage::from_raw(size.width, size.height, vec).unwrap(),
+                        image::RgbaImage::from_raw(w, h, vec).unwrap(),
                     );
 
                     dynamic_image.save(path).unwrap();

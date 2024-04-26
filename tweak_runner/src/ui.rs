@@ -18,18 +18,19 @@ use std::sync::mpsc;
 use egui_notify::Toasts;
 
 pub struct UiOptions {
-    pub removal_staged: bool,
     pub paused: bool,
     pub halt_recompilation: bool,
     pub lock_aspect_ratio: Option<[u32; 2]>,
+    pub use_screen_size_for_screenshots: bool,
     pub resize_debounce: Option<std::time::Instant>,
 }
+
 impl Default for UiOptions {
     fn default() -> Self {
         Self {
             resize_debounce: None,
-            removal_staged: false,
             paused: false,
+            use_screen_size_for_screenshots: true,
             halt_recompilation: false,
             lock_aspect_ratio: Some([640, 480]),
         }
@@ -69,7 +70,6 @@ pub fn side_panel(
                         ui.label(RichText::new("User Inputs").size(15.0));
                         if ui.button("Options").clicked() {
                             ui_state.show_options = !ui_state.show_options;
-                            ui_state.options.removal_staged = false;
                         };
                         if ui.button("<< [Esc]").clicked() {
                             ui_state.input_panel_hidden = true;
@@ -114,10 +114,21 @@ fn option_panel(ui_state: &mut UiState, message_sender: &mpsc::Sender<RunnerMess
             {
                 ui_state.options.halt_recompilation = !ui_state.options.halt_recompilation;
             }
-            if ui.radio(ui_state.options.paused, "pause").clicked() {
+            if ui.radio(ui_state.options.paused, "Pause").clicked() {
                 ui_state.options.paused = !ui_state.options.paused
             }
         });
+
+        if ui
+            .radio(
+                ui_state.options.use_screen_size_for_screenshots,
+                "Use screen aspect for screenshots",
+            )
+            .clicked()
+        {
+            ui_state.options.use_screen_size_for_screenshots =
+                !ui_state.options.use_screen_size_for_screenshots
+        }
 
         if ui.button("take screenshot").clicked() {
             launch_screenshot_dialog(message_sender.clone());
