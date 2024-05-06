@@ -105,14 +105,14 @@ void main()	{
     }
   } else if (pass_index < 14 && pass_index >= 1) {
 
-          float level = clamp(pass_index - 1.0, 0.0, 6.0);
-          int stepwidth = int(exp2(6.0 - level));
+          float level = clamp(pass_index - 1.0, 0.0, 13.0);
+          int stepwidth = int(exp2(13.0 - level));
 
-          float best_dist = 999999.0;
+          float best_dist = 1000000.0;
           vec2 best_coord = vec2(0.0);
           for (int y = -1; y <= 1; ++y) {
              for (int x = -1; x <= 1; ++x) {
-                 vec2 fc = (gl_FragCoord.xy / resolution.xy) + vec2(x,y)*stepwidth*0.0005;
+                 vec2 fc = (gl_FragCoord.xy / resolution.xy) + vec2(x,y)*stepwidth*0.0002;
 	               vec4 ntc = texture(sampler2D(distance_field, default_sampler), fc);
                  float d = length(ntc.xy - fc);
                  if ((ntc.x != 0.0) && (ntc.y != 0.0) && (d < best_dist)) {
