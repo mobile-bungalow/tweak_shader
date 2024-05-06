@@ -21,14 +21,15 @@ layout(push_constant) uniform ShaderInputs {
 #pragma input(float, name=inverse_jump_scale, default=1.0, min=0.1, max=100.0)
 #pragma input(float, name=edge_threshold, default=0.0, min=0.0, max=1.0)
 #pragma input(bool, name=show_edges, default=false)
+#pragma input(bool, name=show_distances, default=false)
 layout(set=1, binding=0) uniform custom_inputs {
     float blur;
     float inverse_jump_scale;
     float edge_threshold;
     float scale_blur_power;
     int show_edges;
+    int show_distances;
 };
-
 
 // init
 #pragma pass(0, target="distance_field")
@@ -141,6 +142,12 @@ void main()	{
     }
 
     color /= blur > 0 ? (16.0 * 3.0) + 1.0 : 1.0;
+    
+
+    if (show_distances == 1) {
+	    out_color =  vec4(vec3(dist_from_point), 1.0);
+      return;
+    }
 
 	  out_color =  vec4(color.rg, is_in_radius * (1.0 - show_edges) * dist_from_point, is_in_radius);
   } 
