@@ -16,7 +16,11 @@ layout(push_constant) uniform ShaderInputs {
     uint pass_index;   // updated to reflect render pass
 };
 
-//TODO: some make a way to generalize this huge stack 
+#pragma input(float, name=time_scale, default=7, min=0.1, max=30)
+layout(set=1, binding=0) uniform custom_inputs {
+    float time_scale;
+};
+
 
 // init
 #pragma pass(0, target="distance_field")
@@ -86,7 +90,7 @@ void main()	{
                         length(vec2(grad_x.b, grad_y.b)), 0.0);
 
        if (alpha(color) > 0.1) {
-        out_color = vec4(uv.xy, 0.0, 1.0);
+         out_color = vec4(uv.xy, 0.0, 1.0);
        } else {
          out_color = vec4(0.0, 0.0, 0.0, 1.0);
        }
