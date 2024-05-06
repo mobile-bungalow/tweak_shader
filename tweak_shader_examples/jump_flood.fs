@@ -16,9 +16,17 @@ layout(push_constant) uniform ShaderInputs {
     uint pass_index;   // updated to reflect render pass
 };
 
-#pragma input(float, name=time_scale, default=7, min=0.1, max=30)
+#pragma input(float, name=blur, default=0.0, min=0.0, max=1.0)
+#pragma input(float, name=scale_blur_power, default=0.0, min=0.0, max=4.0)
+#pragma input(float, name=inverse_jump_scale, default=1.0, min=0.1, max=100.0)
+#pragma input(float, name=edge_threshold, default=0.0, min=0.0, max=1.0)
+#pragma input(bool, name=show_edges, default=false)
 layout(set=1, binding=0) uniform custom_inputs {
-    float time_scale;
+    float blur;
+    float inverse_jump_scale;
+    float edge_threshold;
+    float scale_blur_power;
+    int show_edges;
 };
 
 
@@ -84,18 +92,18 @@ void main()	{
           }
       }
 
-
       vec4 color = vec4(length(vec2(grad_x.r, grad_y.r)),
                         length(vec2(grad_x.g, grad_y.g)),
                         length(vec2(grad_x.b, grad_y.b)), 0.0);
 
-       if (alpha(color) > 0.1) {
-         out_color = vec4(uv.xy, 0.0, 1.0);
-       } else {
-         out_color = vec4(0.0, 0.0, 0.0, 1.0);
-       }
+       out_color = mix(vec4(uv.xy, 0.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0), step(alpha(color), edge_threshold));
 
   } else if (pass_index < 14 && pass_index >= 1) {
+
+          if (show_edges == 1.0) {
+            out_color = dist;
+            return;
+          }
 
           float level = clamp(pass_index - 1.0, 0.0, 13.0);
           int stepwidth = int(exp2(13.0 - level));
@@ -104,7 +112,7 @@ void main()	{
           vec2 best_coord = vec2(0.0);
           for (int y = -1; y <= 1; ++y) {
              for (int x = -1; x <= 1; ++x) {
-                 vec2 fc = (gl_FragCoord.xy / resolution.xy) + vec2(x,y)*stepwidth*0.00003;
+                 vec2 fc = (gl_FragCoord.xy / resolution.xy) + vec2(x,y)*stepwidth*(1.0 / length(resolution * inverse_jump_scale));
 	               vec4 ntc = texture(sampler2D(distance_field, default_sampler), fc);
                  float d = length(ntc.xy - fc);
                  if ((ntc.x != 0.0) && (ntc.y != 0.0) && (d < best_dist)) {
@@ -117,7 +125,24 @@ void main()	{
 	    out_color = vec4(best_coord, 0.0, 1.0);
   } else if (pass_index == 14) {
     // finish
-	  out_color =  vec4(dist.rg, length(dist.xy - uv), 1.0);
+    // this will be 0 if jump flood never touched it
+    float is_in_radius = step(0.00001, length(dist.xy));
+    float dist_from_point = length(dist.xy - uv);
+
+    vec4 color = vec4(dist.rg, 0.0, 1.0);
+
+    for( float d=0.0; d<TAU && blur > 0.0; d+=TAU/16.0)
+    {
+		for(float i=1.0/3.0; i<=1.0; i+=1.0/3.0)
+        {
+          float rad = blur * pow(dist_from_point, 4.0 - scale_blur_power);
+			    color += texture(sampler2D(distance_field, default_sampler), uv+vec2(cos(d),sin(d))*rad*i);		
+        }
+    }
+
+    color /= blur > 0 ? (16.0 * 3.0) + 1.0 : 1.0;
+
+	  out_color =  vec4(color.rg, is_in_radius * (1.0 - show_edges) * dist_from_point, is_in_radius);
   } 
 }
 
