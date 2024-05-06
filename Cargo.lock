@@ -2602,7 +2602,7 @@ checksum = "17f77d76d837a7830fe1d4f12b7b4ba4192c1888001c7164257e4bc6d21d96b4"
 
 [[package]]
 name = "tweak_runner"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "cpal",
@@ -2616,7 +2616,7 @@ dependencies = [
  "ringbuf",
  "rustfft",
  "tinyfiledialogs",
- "tweak_shader 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tweak_shader",
 ]
 
 [[package]]
@@ -2630,20 +2630,6 @@ dependencies = [
  "nom",
  "pollster",
  "pretty_assertions",
- "rodio",
- "rustfft",
- "wgpu",
-]
-
-[[package]]
-name = "tweak_shader"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ce70847fe730ba8fe6c96357678d86093faad5548f4917337ace96a1a9226e8"
-dependencies = [
- "bytemuck",
- "ffmpeg-next",
- "nom",
  "rodio",
  "rustfft",
  "wgpu",

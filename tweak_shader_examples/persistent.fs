@@ -22,7 +22,7 @@ layout(set = 0, binding = 3) uniform Data {
   int displayMode;
 };
 
-#pragma pass(0, persistent, target="dataHistory", height=1)
+#pragma pass(0, persistent, target="dataHistory")
 layout(set=0, binding=1) uniform sampler default_sampler;
 layout(set=0, binding=2) uniform texture2D dataHistory;
 

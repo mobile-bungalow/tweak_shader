@@ -136,16 +136,16 @@ impl RenderContext {
                 .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?
         };
 
-        let mut isf_pass_structure = vec![];
+        let mut pass_structure = vec![];
 
-        isf_pass_structure.extend(
+        pass_structure.extend(
             document
                 .passes
                 .iter()
                 .map(|pass| RenderPass::new(pass, format)),
         );
 
-        isf_pass_structure.push(RenderPass::new(&Default::default(), format));
+        pass_structure.push(RenderPass::new(&Default::default(), format));
 
         // collect all set indices, find the max then create bind sets contiguous up to max.
         // some might be empty.
@@ -170,7 +170,7 @@ impl RenderContext {
             queue,
             sets,
             push_const,
-            isf_pass_structure.len(),
+            pass_structure.len(),
         )
         .map_err(Error::UniformError)?;
 
@@ -222,7 +222,7 @@ impl RenderContext {
             uniforms,
             user_set_up_jobs,
             pipeline,
-            passes: isf_pass_structure,
+            passes: pass_structure,
             cpu_view_cache: None,
             texture_job_queue: BTreeMap::new(),
             streams: BTreeMap::new(),
@@ -264,7 +264,7 @@ impl RenderContext {
         height: u32,
     ) {
         // resize render targets and copy over texture contents for consistency
-        self.update_isf_pass_textures(command_encoder, device, width, height);
+        self.update_pass_textures(command_encoder, device, width, height);
         // updates video, audio, streams, shows new images.
         self.update_display_textures(device, queue);
         // write changes to uniforms to gpu mapped buffers
@@ -345,7 +345,9 @@ impl RenderContext {
                     );
                 };
             };
+        }
 
+        for pass in self.passes.iter().take(self.passes.len() - 1) {
             // zero out the target texture
             // if the pass wasn't persistent
             // the clear loadop does not work
@@ -359,7 +361,7 @@ impl RenderContext {
                         height,
                         width,
                         None,
-                        &wgpu::TextureFormat::Rgba8UnormSrgb,
+                        &pass.target_format,
                         device,
                         queue,
                     );
@@ -773,7 +775,7 @@ impl RenderContext {
 
     // resizes all the render pass target textures
     // or initializes them.
-    fn update_isf_pass_textures(
+    fn update_pass_textures(
         &mut self,
         command_encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
@@ -819,6 +821,7 @@ impl RenderContext {
                             depth_or_array_layers: 1,
                         },
                     );
+
                     command_encoder.copy_texture_to_texture(
                         old_target.as_image_copy(),
                         new_target.as_image_copy(),
@@ -1036,7 +1039,7 @@ impl std::fmt::Write for NoopWriter {
     }
 }
 
-// template for every texture ever loaded by out pipelines
+// template for input textures, copied to from the gpu render target
 fn render_pass_result_desc(
     width: u32,
     height: u32,
@@ -1060,7 +1063,7 @@ fn render_pass_result_desc(
     }
 }
 
-// template for every texture ever loaded by out pipelines
+// template for targets written to by the gpu
 fn target_desc(width: u32, height: u32, format: TextureFormat) -> wgpu::TextureDescriptor<'static> {
     wgpu::TextureDescriptor {
         label: None,
