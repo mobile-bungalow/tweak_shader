@@ -37,7 +37,7 @@ layout(push_constant) uniform ShaderInputs {
 #pragma pass(13, target="distance_field")
 layout(set=0, binding=1) uniform sampler default_sampler;
 layout(set=0, binding=2) uniform texture2D distance_field;
-layout(set=0, binding=3) uniform texture2D matte;
+layout(set=0, binding=3) uniform texture2D image;
 
 
 layout(location = 0) out vec4 out_color; 
@@ -47,62 +47,50 @@ float TAU = 6.28318530718;
 // get alpha from matte texture
 float alpha(vec4 color) {
   // wrong but fine for now
-  return color.r;
+  return 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
 }
+const mat3 sobel_x = mat3(-1.0, 0.0, 1.0,
+                         -2.0, 0.0, 2.0,
+                         -1.0, 0.0, 1.0);
+
+const mat3 sobel_y = mat3( 1.0,  2.0,  1.0,
+                          0.0,  0.0,  0.0,
+                         -1.0, -2.0, -1.0);
 
 void main()	{
-  vec2 fsize = resolution.xy; 
-	vec2	loc = gl_FragCoord.xy;
-	vec4 dist = texture(sampler2D(distance_field, default_sampler), loc / fsize);
+  vec2 uv = gl_FragCoord.xy / resolution.xy;
+	vec4 dist = texture(sampler2D(distance_field, default_sampler), uv);
   ivec2 d_size = textureSize(distance_field, 0);
-  ivec2 matte_size = textureSize(matte, 0);
-  vec2 fmatte_size = vec2(float(matte_size.x), float(matte_size.y));
+  ivec2 matte_size = textureSize(image, 0);
 
-  vec2 aspect = 1.0 / matte_size;
-  vec2 uv = loc / fmatte_size;
-	vec4 matte_r = texture(sampler2D(matte, default_sampler), uv);
+	vec4 matte_r = texture(sampler2D(image, default_sampler), uv);
 	vec4	inputPixelColor = vec4(0.0, 0.0, 0.0, 1.0);
 
   // init outer ring
   if (pass_index == 0) {
 
-    if (alpha(matte_r) < 1.0) {
-
-      vec2 dir_to_border = vec2(0.0);
-      bool out_of_radius = true;
-      for (float i = 0.0; i < TAU; i += TAU / 16.0) {
-
-          vec2 dir = vec2(sin(i), cos(i));
-          vec2 new_uv = uv - dir * aspect * 2.0;
-          vec4 col = texture(sampler2D(matte, default_sampler), new_uv);
-          col.r = step(0.1, 1.0 - col.r);
-
-          if (col.r <= alpha(matte_r)) {
-              out_of_radius = false;
-              dir_to_border += dir;
-          } 
+      vec3 grad_x = vec3(0.0); 
+      vec3 grad_y = vec3(0.0); 
+      for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                vec2 offset = vec2(x, y) / resolution.xy;
+                vec3 color = texture(sampler2D(image, default_sampler), uv + offset).rgb;
+                grad_x += color * sobel_x[y + 1][x + 1];
+                grad_y += color * sobel_y[y + 1][x + 1];
+          }
       }
 
-      if (!out_of_radius) {
 
-       float d = 2.0;
-       float move = 2.0 ;
-       dir_to_border = normalize(dir_to_border);
-       vec2 nuv = vec2(0.0);
+      vec4 color = vec4(length(vec2(grad_x.r, grad_y.r)),
+                        length(vec2(grad_x.g, grad_y.g)),
+                        length(vec2(grad_x.b, grad_y.b)), 0.0);
 
-       for (int i = 0; i < 8 && !out_of_radius; i++) {
-           vec2 new_uv = uv + (dir_to_border * aspect * d);
-           vec4 col = texture(sampler2D(matte, default_sampler), new_uv);
-           col.r = 1.0 - col.r;
-           d += col.r > 0.0 ? -move : move; // -4.0 is a weird fudge
-           move /= 2.0;
-           nuv = new_uv;
+       if (alpha(color) > 0.1) {
+        out_color = vec4(uv.xy, 0.0, 1.0);
+       } else {
+         out_color = vec4(0.0, 0.0, 0.0, 1.0);
        }
 
-       out_color.rg = nuv;
-       out_color.a = 1.0;
-      }
-    }
   } else if (pass_index < 14 && pass_index >= 1) {
 
           float level = clamp(pass_index - 1.0, 0.0, 13.0);
@@ -112,7 +100,7 @@ void main()	{
           vec2 best_coord = vec2(0.0);
           for (int y = -1; y <= 1; ++y) {
              for (int x = -1; x <= 1; ++x) {
-                 vec2 fc = (gl_FragCoord.xy / resolution.xy) + vec2(x,y)*stepwidth*0.0002;
+                 vec2 fc = (gl_FragCoord.xy / resolution.xy) + vec2(x,y)*stepwidth*0.00003;
 	               vec4 ntc = texture(sampler2D(distance_field, default_sampler), fc);
                  float d = length(ntc.xy - fc);
                  if ((ntc.x != 0.0) && (ntc.y != 0.0) && (d < best_dist)) {
@@ -121,10 +109,11 @@ void main()	{
                  }
              }
           }      
+
 	    out_color = vec4(best_coord, 0.0, 1.0);
   } else if (pass_index == 14) {
     // finish
-	  out_color =  mix(matte_r, dist, dist.a);
+	  out_color =  vec4(dist.rg, length(dist.xy - uv), 1.0);
   } 
 }
 
