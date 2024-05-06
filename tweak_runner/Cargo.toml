@@ -11,7 +11,7 @@ audio = ["tweak_shader/audio"]
 video = ["tweak_shader/video"]
 
 [dependencies]
-tweak_shader = { path = "../tweak_shader" } 
+tweak_shader = { path = "0.2.4" } 
 egui-wgpu = { version = "0.26.2", features = ["winit"] }
 egui-notify = "0.13"
 egui-winit = "0.26.0"
