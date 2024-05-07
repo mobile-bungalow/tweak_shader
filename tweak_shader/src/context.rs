@@ -353,7 +353,13 @@ impl RenderContext {
             // the clear loadop does not work
             if !pass.persistent {
                 if let Some(ref tex_name) = pass.pass_target_var_name {
-                    let size = height * width * 4;
+                    let size = height
+                        * width
+                        * pass
+                            .target_format
+                            .block_copy_size(Some(wgpu::TextureAspect::All))
+                            .unwrap_or(4);
+
                     let slice = &vec![0; size as usize];
                     self.uniforms.load_texture(
                         tex_name,

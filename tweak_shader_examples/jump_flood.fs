@@ -17,16 +17,20 @@ layout(push_constant) uniform ShaderInputs {
 };
 
 #pragma input(float, name=blur, default=0.0, min=0.0, max=1.0)
+#pragma input(float, name=jump_reduction, default=1.0, min=1.0, max=100.0)
 #pragma input(float, name=scale_blur_power, default=0.0, min=0.0, max=4.0)
-#pragma input(float, name=edge_threshold, default=0.0, min=0.0, max=1.0)
+#pragma input(float, name=edge_threshold, default=0.1, min=0.0, max=1.0)
 #pragma input(bool, name=show_edges, default=false)
 #pragma input(bool, name=show_distances, default=false)
+#pragma input(bool, name=skip_edge_detection, default=false)
 layout(set=1, binding=0) uniform custom_inputs {
     float blur;
     float edge_threshold;
     float scale_blur_power;
+    float jump_reduction;
     int show_edges;
     int show_distances;
+    int skip_edge_detection;
 };
 
 // init
@@ -94,7 +98,7 @@ void main()	{
                         length(vec2(grad_x.g, grad_y.g)),
                         length(vec2(grad_x.b, grad_y.b)), 0.0);
 
-       out_color = mix(vec4(uv.xy, 0.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0), step(alpha(color), edge_threshold));
+       out_color = mix(vec4(uv.xy, 0.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0), step(alpha(mix(color, matte_r, skip_edge_detection)), edge_threshold));
 
   } else if (pass_index < 14 && pass_index >= 1) {
 
@@ -104,7 +108,8 @@ void main()	{
           }
 
           float level = clamp(pass_index - 1.0, 0.0, 13.0);
-          int stepwidth = int(exp2(13.0 - level));
+          int stepwidth = int(exp2(13.0 - level)) / int(log(length(resolution))/log(13.0));
+          stepwidth /= int(jump_reduction);
 
           float best_dist = 1000000.0;
           vec2 best_coord = vec2(0.0);
@@ -125,7 +130,7 @@ void main()	{
     // finish
     // this will be 0 if jump flood never touched it
     float is_in_radius = step(0.00001, length(dist.xy));
-    float dist_from_point = length(dist.xy - uv);
+    float dist_from_point = clamp(length(dist.xy - uv) - skip_edge_detection * alpha(matte_r), 0.0, 1.0);
 
     vec4 color = vec4(dist.rg, 0.0, 1.0);
 
@@ -142,7 +147,7 @@ void main()	{
     
 
     if (show_distances == 1) {
-	    out_color =  vec4(vec3(dist_from_point), 1.0);
+	    out_color =  vec4(vec3(dist_from_point), is_in_radius) ;
       return;
     }
 
