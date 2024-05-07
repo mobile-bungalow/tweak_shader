@@ -111,7 +111,6 @@ void main()	{
           for (int y = -1; y <= 1; ++y) {
              for (int x = -1; x <= 1; ++x) {
                  ivec2 fc = ivec2(gl_FragCoord.xy) + ivec2(x,y) * stepwidth;
-                 fc = ivec2(fc.x % int(resolution.x), fc.y % int(resolution.y));
 	               vec4 ntc = texelFetch(sampler2D(distance_field, default_sampler), fc, 0);
                  float d = length(ntc.xy - (vec2(fc) / resolution.xy));
                  if ((ntc.x != 0.0) && (ntc.y != 0.0) && (d < best_dist)) {
