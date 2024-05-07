@@ -18,13 +18,11 @@ layout(push_constant) uniform ShaderInputs {
 
 #pragma input(float, name=blur, default=0.0, min=0.0, max=1.0)
 #pragma input(float, name=scale_blur_power, default=0.0, min=0.0, max=4.0)
-#pragma input(float, name=inverse_jump_scale, default=1.0, min=0.1, max=100.0)
 #pragma input(float, name=edge_threshold, default=0.0, min=0.0, max=1.0)
 #pragma input(bool, name=show_edges, default=false)
 #pragma input(bool, name=show_distances, default=false)
 layout(set=1, binding=0) uniform custom_inputs {
     float blur;
-    float inverse_jump_scale;
     float edge_threshold;
     float scale_blur_power;
     int show_edges;
@@ -46,7 +44,6 @@ layout(set=1, binding=0) uniform custom_inputs {
 #pragma pass(10, target="distance_field")
 #pragma pass(11, target="distance_field")
 #pragma pass(12, target="distance_field")
-// Finish
 #pragma pass(13, target="distance_field")
 layout(set=0, binding=1) uniform sampler default_sampler;
 layout(set=0, binding=2) uniform texture2D distance_field;
@@ -113,9 +110,10 @@ void main()	{
           vec2 best_coord = vec2(0.0);
           for (int y = -1; y <= 1; ++y) {
              for (int x = -1; x <= 1; ++x) {
-                 vec2 fc = (gl_FragCoord.xy / resolution.xy) + vec2(x,y)*stepwidth*(1.0 / length(resolution * inverse_jump_scale));
-	               vec4 ntc = texture(sampler2D(distance_field, default_sampler), fc);
-                 float d = length(ntc.xy - fc);
+                 ivec2 fc = ivec2(gl_FragCoord.xy) + ivec2(x,y) * stepwidth;
+                 fc = ivec2(fc.x % int(resolution.x), fc.y % int(resolution.y));
+	               vec4 ntc = texelFetch(sampler2D(distance_field, default_sampler), fc, 0);
+                 float d = length(ntc.xy - (vec2(fc) / resolution.xy));
                  if ((ntc.x != 0.0) && (ntc.y != 0.0) && (d < best_dist)) {
                      best_dist = d;
                      best_coord = ntc.xy;

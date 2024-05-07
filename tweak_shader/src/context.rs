@@ -330,7 +330,7 @@ impl RenderContext {
             // texture that is used in the pipeline
             if let Some((target_tex, _)) = pass.render_target_texture.as_ref() {
                 if let Some(bind_group_tex) = pass
-                    .bind_group_target_texture
+                    .pass_target_var_name
                     .as_ref()
                     .and_then(|name| self.uniforms.get_texture(name))
                 {
@@ -352,7 +352,7 @@ impl RenderContext {
             // if the pass wasn't persistent
             // the clear loadop does not work
             if !pass.persistent {
-                if let Some(ref tex_name) = pass.bind_group_target_texture {
+                if let Some(ref tex_name) = pass.pass_target_var_name {
                     let size = height * width * 4;
                     let slice = &vec![0; size as usize];
                     self.uniforms.load_texture(
@@ -520,7 +520,7 @@ impl RenderContext {
         if self
             .passes
             .iter()
-            .filter_map(|p| p.bind_group_target_texture.as_ref())
+            .filter_map(|p| p.pass_target_var_name.as_ref())
             .any(|t| t == variable_name)
         {
             return false;
@@ -562,7 +562,7 @@ impl RenderContext {
         if self
             .passes
             .iter()
-            .filter_map(|p| p.bind_group_target_texture.as_ref())
+            .filter_map(|p| p.pass_target_var_name.as_ref())
             .any(|t| t == &variable_name)
         {
             return false;
@@ -785,13 +785,13 @@ impl RenderContext {
         if self
             .passes
             .iter()
-            .all(|pass| pass.bind_group_target_texture.is_none())
+            .all(|pass| pass.pass_target_var_name.is_none())
         {
             return;
         }
 
         for pass in self.passes.iter_mut() {
-            let Some(target) = pass.bind_group_target_texture.clone() else {
+            let Some(target) = pass.pass_target_var_name.clone() else {
                 continue;
             };
 
@@ -985,7 +985,7 @@ struct RenderPass {
     // the height if constant otherwise maps to the window height
     const_height: Option<u32>,
     // The texture variable name, if it exists
-    bind_group_target_texture: Option<String>,
+    pass_target_var_name: Option<String>,
     // The target to render into
     pub render_target_texture: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
@@ -994,7 +994,7 @@ impl RenderPass {
     pub fn needs_resize(&self, target_height: u32, target_width: u32) -> bool {
         let target_height = self.const_height.unwrap_or(target_height);
         let target_width = self.const_width.unwrap_or(target_width);
-        let mapped_as_input = self.bind_group_target_texture.is_some();
+        let mapped_as_input = self.pass_target_var_name.is_some();
         let unallocated = self.render_target_texture.is_none();
         let wrong_size = self
             .render_target_texture
@@ -1025,7 +1025,7 @@ impl RenderPass {
             persistent: value.persistent,
             const_width: value.width,
             const_height: value.height,
-            bind_group_target_texture: value.target_texture.clone(),
+            pass_target_var_name: value.target_texture.clone(),
             render_target_texture: None,
         }
     }
