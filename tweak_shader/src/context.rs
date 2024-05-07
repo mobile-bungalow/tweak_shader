@@ -347,12 +347,20 @@ impl RenderContext {
             };
         }
 
+        let mut set = std::collections::HashSet::new();
+        // take all but the output pass
         for pass in self.passes.iter().take(self.passes.len() - 1) {
             // zero out the target texture
             // if the pass wasn't persistent
             // the clear loadop does not work
             if !pass.persistent {
                 if let Some(ref tex_name) = pass.pass_target_var_name {
+                    if !set.contains(tex_name) {
+                        break;
+                    } else {
+                        set.insert(tex_name.clone());
+                    }
+
                     let size = height
                         * width
                         * pass
