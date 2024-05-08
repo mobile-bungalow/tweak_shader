@@ -20,15 +20,13 @@ pub fn convert_output_to_argb_format(
     glsl::transpiler::glsl::show_translation_unit(&mut output, &expr);
 
     let mut options = Options::from(naga::ShaderStage::Fragment);
-    options
-        .defines
-        .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
 
     let mut frontend = Frontend::default();
     frontend.parse(&options, &output)
 }
 
-const TEXTURE_SAMPLING_FUNCTIONS: [&str; 7] = [
+const TEXTURE_SAMPLING_FUNCTIONS: [&str; 8] = [
+    "texelFetch",
     "texture",
     "textureOffset",
     "textureProj",
@@ -68,9 +66,7 @@ impl VisitorMut for EntryPointExitSwizzler {
             let ender = format!("{out_var} = {out_var}.argb;");
             let new_stmnt = glsl::syntax::Statement::parse(ender);
             if let Ok(end_stmnt) = new_stmnt {
-                block
-                    .statement_list
-                    .insert(index.saturating_sub(1), end_stmnt);
+                block.statement_list.insert(index, end_stmnt);
             }
         }
 
@@ -123,6 +119,7 @@ impl VisitorMut for FormatSwizzler {
         let mut exit_swiz = None;
 
         for item in &mut tu.0 {
+            // pyramic code.
             // 'ello Giza - just check if we can get an "out vec4"
             if let ExternalDeclaration::Declaration(Declaration::InitDeclaratorList(
                 InitDeclaratorList {
@@ -199,6 +196,22 @@ mod test {
         glsl::transpiler::glsl::show_statement(&mut string, &expr);
         assert_eq!(pre, &string);
     }
+
+    //    #[test]
+    //    fn panny() {
+    //        let mut swiz = FormatSwizzler::new();
+    //        let stripped_src: String = include_str!("../../tweak_shader_examples/jump_flood.fs")
+    //            .lines()
+    //            .filter(|line| !line.trim().starts_with("#pragma"))
+    //            .collect::<Vec<_>>()
+    //            .join("\n");
+    //
+    //        let mut expr = glsl::syntax::TranslationUnit::parse(stripped_src).unwrap();
+    //        expr.visit_mut(&mut swiz);
+    //        let mut string = String::new();
+    //        glsl::transpiler::glsl::show_translation_unit(&mut string, &expr);
+    //        panic!("{}", string);
+    //    }
 
     #[test]
     fn visit_sampler_simple() {
