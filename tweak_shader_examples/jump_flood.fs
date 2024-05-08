@@ -102,30 +102,31 @@ void main()	{
 
   } else if (pass_index < 14 && pass_index >= 1) {
 
-          if (show_edges == 1.0) {
-            out_color = dist;
-            return;
-          }
+         if (show_edges == 1.0) {
+           out_color = dist;
+           return;
+         }
 
-          float level = clamp(pass_index - 1.0, 0.0, 13.0);
-          int stepwidth = int(exp2(13.0 - level)) / int(log(length(resolution))/log(13.0));
-          stepwidth /= int(jump_reduction);
+         float level = clamp(pass_index - 1.0, 0.0, 13.0);
+         float stepwidth = exp2(13.0 - level);
+         stepwidth /= jump_reduction;
 
-          float best_dist = 1000000.0;
-          vec2 best_coord = vec2(0.0);
-          for (int y = -1; y <= 1; ++y) {
-             for (int x = -1; x <= 1; ++x) {
-                 ivec2 fc = ivec2(gl_FragCoord.xy) + ivec2(x,y) * stepwidth;
-	               vec4 ntc = texelFetch(sampler2D(distance_field, default_sampler), fc, 0);
-                 float d = length(ntc.xy - (vec2(fc) / resolution.xy));
-                 if ((ntc.x != 0.0) && (ntc.y != 0.0) && (d < best_dist)) {
-                     best_dist = d;
-                     best_coord = ntc.xy;
-                 }
-             }
-          }      
+         float best_dist = 1000000.0;
+         vec2 best_coord = vec2(0.0);
+         for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                vec2 fc = uv + ((vec2(x,y) * stepwidth) / resolution.xy);
+	              vec4 ntc = texture(sampler2D(distance_field, default_sampler), fc);
+                vec2 diff = ntc.xy - uv;
+                float d = dot(diff, diff);
+                if ((ntc.x != 0.0) && (ntc.y != 0.0) && (d < best_dist)) {
+                    best_dist = d;
+                    best_coord = ntc.xy;
+                }
+            }
+         }      
 
-	    out_color = vec4(best_coord, 0.0, 1.0);
+	       out_color = vec4(best_coord.xy, 0.0, 1.0);
   } else if (pass_index == 14) {
     // finish
     // this will be 0 if jump flood never touched it
