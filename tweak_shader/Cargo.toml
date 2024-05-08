@@ -1,6 +1,6 @@
 [package]
 name = "tweak_shader"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/mobile-bungalow/tweak_shader"
@@ -21,7 +21,6 @@ optional = true
 [dependencies.ffmpeg-next]
 version = "6.0.0" 
 optional = true
-
 
 [dependencies]
 glsl = { version = "7.0.0", features = [], optional = true }
