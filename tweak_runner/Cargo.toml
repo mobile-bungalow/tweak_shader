@@ -1,6 +1,6 @@
 [package]
 name = "tweak_runner"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "a runner for the tweak shader library."
 license = "MIT"
@@ -11,7 +11,7 @@ audio = ["tweak_shader/audio"]
 video = ["tweak_shader/video"]
 
 [dependencies]
-tweak_shader = { path = "../tweak_shader/" } 
+tweak_shader = { version = "0.2.6" } 
 egui-wgpu = { version = "0.26.2", features = ["winit"] }
 egui-notify = "0.13"
 egui-winit = "0.26.0"
