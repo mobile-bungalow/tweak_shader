@@ -2616,12 +2616,12 @@ dependencies = [
  "ringbuf",
  "rustfft",
  "tinyfiledialogs",
- "tweak_shader 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tweak_shader",
 ]
 
 [[package]]
 name = "tweak_shader"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "bytemuck",
  "ffmpeg-next",
@@ -2630,20 +2630,6 @@ dependencies = [
  "nom",
  "pollster",
  "pretty_assertions",
- "rodio",
- "rustfft",
- "wgpu",
-]
-
-[[package]]
-name = "tweak_shader"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "905a775a75e03c04979d7224f1b152458f6cea1e452f7fc0a8b73d7af1430f1f"
-dependencies = [
- "bytemuck",
- "ffmpeg-next",
- "nom",
  "rodio",
  "rustfft",
  "wgpu",

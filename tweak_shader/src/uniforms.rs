@@ -335,7 +335,7 @@ impl Uniforms {
 
                 let new_tex = if other.render_pass_targets.contains(name) {
                     let mut desc = txtr_desc(width, height);
-                    desc.format = other.format;
+                    desc.format = wgpu::TextureFormat::Rgba16Float;
                     device.create_texture(&desc)
                 } else {
                     device.create_texture(&txtr_desc(width, height))

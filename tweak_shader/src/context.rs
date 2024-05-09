@@ -21,6 +21,7 @@ pub struct RenderContext {
     uniforms: uniforms::Uniforms,
     passes: Vec<RenderPass>,
     pipeline: wgpu::RenderPipeline,
+    float_pipeline: wgpu::RenderPipeline,
     streams: BTreeMap<VarName, StreamInfo>,
     texture_job_queue: BTreeMap<VarName, TextureJob>,
     user_set_up_jobs: Vec<crate::UserJobs>,
@@ -142,7 +143,7 @@ impl RenderContext {
             document
                 .passes
                 .iter()
-                .map(|pass| RenderPass::new(pass, format)),
+                .map(|pass| RenderPass::new(pass, TextureFormat::Rgba16Float)),
         );
 
         pass_structure.push(RenderPass::new(&Default::default(), format));
@@ -218,10 +219,30 @@ impl RenderContext {
             label: None,
         });
 
+        let float_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout: Some(&pipeline_layout),
+            fragment: Some(wgpu::FragmentState {
+                module: &fs_shader_module,
+                entry_point: "main",
+                targets: &[Some(wgpu::TextureFormat::Rgba16Float.into())],
+            }),
+            vertex: wgpu::VertexState {
+                module: &vs_shader_module,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview: None,
+            label: None,
+        });
+
         Ok(RenderContext {
             uniforms,
             user_set_up_jobs,
             pipeline,
+            float_pipeline,
             passes: pass_structure,
             cpu_view_cache: None,
             texture_job_queue: BTreeMap::new(),
@@ -291,7 +312,7 @@ impl RenderContext {
                     depth_stencil_attachment: None,
                 });
 
-                rpass.set_pipeline(&self.pipeline);
+                rpass.set_pipeline(&self.float_pipeline);
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }
