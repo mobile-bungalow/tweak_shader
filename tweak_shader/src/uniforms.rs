@@ -532,7 +532,7 @@ impl Uniforms {
         &mut self.utility_block_data
     }
 
-    pub fn override_texture_view(&mut self, name: &str, new_tex: &wgpu::Texture) -> bool {
+    pub fn override_texture_view_with_tex(&mut self, name: &str, new_tex: &wgpu::Texture) -> bool {
         let mut desc = DEFAULT_VIEW;
         desc.format = Some(new_tex.format());
         let tex_view = new_tex.create_view(&desc);
@@ -544,6 +544,28 @@ impl Uniforms {
         };
         if let Some(set) = self.sets.get_mut(addr.set) {
             let out = set.override_texture_view(height, width, addr, tex_view);
+            if out {
+                set.needs_rebind = true;
+            }
+            out
+        } else {
+            false
+        }
+    }
+
+    pub fn override_texture_view_with_view(
+        &mut self,
+        name: &str,
+        width: u32,
+        height: u32,
+        new_tex_view: wgpu::TextureView,
+    ) -> bool {
+        let Some(addr) = self.lookup_table.get(name) else {
+            return false;
+        };
+
+        if let Some(set) = self.sets.get_mut(addr.set) {
+            let out = set.override_texture_view(height, width, addr, new_tex_view);
             if out {
                 set.needs_rebind = true;
             }

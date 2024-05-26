@@ -411,6 +411,76 @@ void main() {
 
 #[test]
 // test a texture identity shader
+fn shrimple_texture_direct() {
+    let (device, queue) = set_up_wgpu();
+    // this will panic if the pipeline can't be set up.
+    let mut tx_load = RenderContext::new(
+        SHRIMPLE_TEXTURE_LOAD,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
+    let tex = device.create_texture_with_data(
+        &queue,
+        &target_desc(TEST_RENDER_DIM, TEST_RENDER_DIM),
+        Default::default(),
+        &shrimple_bytes,
+    );
+    tx_load.load_shared_texture(&tex, "input_image");
+
+    tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
+
+    let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    assert!(approximately_equivalent(&shrimple_bytes, &output));
+}
+
+#[test]
+// test a texture identity shader
+fn shrimple_texture_load_view() {
+    let (device, queue) = set_up_wgpu();
+    // this will panic if the pipeline can't be set up.
+    let mut tx_load = RenderContext::new(
+        SHRIMPLE_TEXTURE_LOAD,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
+    let tex = device.create_texture_with_data(
+        &queue,
+        &target_desc(TEST_RENDER_DIM, TEST_RENDER_DIM),
+        Default::default(),
+        &shrimple_bytes,
+    );
+
+    tx_load.load_shared_texture_view(
+        tex.create_view(&Default::default()),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+        "input_image",
+    );
+
+    tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
+    tx_load.load_texture(
+        shrimple_bytes.clone(),
+        "input_image".into(),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
+
+    let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    assert!(approximately_equivalent(&shrimple_bytes, &output));
+}
+
+#[test]
+// test a texture identity shader
 fn shrimple_texture_load() {
     let (device, queue) = set_up_wgpu();
     // this will panic if the pipeline can't be set up.
@@ -834,6 +904,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
     (d, q)
 }
 use image::{ImageBuffer, ImageFormat, Rgba};
+use wgpu::util::DeviceExt;
 
 fn approximately_equivalent(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len()

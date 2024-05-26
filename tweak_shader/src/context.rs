@@ -561,7 +561,31 @@ impl RenderContext {
             return false;
         }
 
-        self.uniforms.override_texture_view(variable_name, texture)
+        self.uniforms
+            .override_texture_view_with_tex(variable_name, texture)
+    }
+
+    /// Creates a texture view and maps it to the pipeline in place of a locally
+    /// stored texture. this will fail if you try to override a render target texture.
+    pub fn load_shared_texture_view(
+        &mut self,
+        texture: wgpu::TextureView,
+        width: u32,
+        height: u32,
+        variable_name: &str,
+    ) -> bool {
+        // fizzle on attempting to write a target texture
+        if self
+            .passes
+            .iter()
+            .filter_map(|p| p.pass_target_var_name.as_ref())
+            .any(|t| t == variable_name)
+        {
+            return false;
+        }
+
+        self.uniforms
+            .override_texture_view_with_view(variable_name, width, height, texture)
     }
 
     /// If a texture is loaded in the pipeline under `variable_name` this will return a new view into it.
@@ -1063,14 +1087,6 @@ impl RenderPass {
             pass_target_var_name: value.target_texture.clone(),
             render_target_texture: None,
         }
-    }
-}
-
-struct NoopWriter;
-
-impl std::fmt::Write for NoopWriter {
-    fn write_str(&mut self, _x: &str) -> std::fmt::Result {
-        Ok(())
     }
 }
 
