@@ -98,6 +98,73 @@ fn basic_frag() {
     ));
 }
 
+#[test]
+fn basic_frag_target_tex() {
+    let (device, queue) = set_up_wgpu();
+    // this will panic if the pipeline can't be set up.
+    let mut basic = RenderContext::new(
+        BASIC_SRC,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    let out_tex = device.create_texture(&target_desc(TEST_RENDER_DIM, TEST_RENDER_DIM));
+
+    basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
+
+    basic.render(
+        &queue,
+        &device,
+        &out_tex.create_view(&Default::default()),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
+
+    let mut time_0_bytes =
+        vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4 as usize];
+
+    read_texture_contents_to_slice(
+        &device,
+        &queue,
+        &out_tex,
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+        &mut time_0_bytes,
+    );
+
+    //write_texture_to_png(&time_0_bytes, "basic.png").unwrap();
+    assert!(approximately_equivalent(
+        time_0_bytes.as_slice(),
+        &png_pixels!("./resources/basic.png")
+    ));
+
+    basic.update_time(1.0);
+
+    basic.render(
+        &queue,
+        &device,
+        &out_tex.create_view(&Default::default()),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
+
+    read_texture_contents_to_slice(
+        &device,
+        &queue,
+        &out_tex,
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+        &mut time_0_bytes,
+    );
+
+    assert!(approximately_equivalent(
+        &time_0_bytes,
+        &png_pixels!("./resources/basic_time_1.png")
+    ));
+}
+
 #[cfg(feature = "after_effects")]
 #[test]
 fn pre_processing_hiccups_repro() {
@@ -956,4 +1023,71 @@ fn write_texture_to_png(
     // Write the texture to a PNG file.
     texture.save_with_format(file_path, ImageFormat::Png)?;
     Ok(())
+}
+
+fn read_texture_contents_to_slice(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    height: u32,
+    width: u32,
+    slice: &mut [u8],
+) {
+    let block_size = texture
+        .format()
+        .block_copy_size(Some(wgpu::TextureAspect::All))
+        .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
+
+    let row_byte_ct = block_size * width;
+    let padded_row_byte_ct = (row_byte_ct + 255) & !255;
+
+    // Create a buffer to store the texture data
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Texture Read Buffer"),
+        size: (height * padded_row_byte_ct) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Create a command encoder
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Texture Read Encoder"),
+    });
+
+    // Copy the texture contents to the buffer
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::ImageCopyBuffer {
+            buffer: &buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_row_byte_ct),
+                rows_per_image: None,
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    queue.submit(Some(encoder.finish()));
+
+    {
+        let buffer_slice = buffer.slice(..);
+        buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
+        device.poll(wgpu::Maintain::Wait);
+
+        let gpu_slice = buffer_slice.get_mapped_range();
+        let gpu_chunks = gpu_slice.chunks(padded_row_byte_ct as usize);
+        let slice_chunks = slice.chunks_mut(row_byte_ct as usize);
+        let iter = slice_chunks.zip(gpu_chunks);
+
+        for (output_chunk, gpu_chunk) in iter {
+            output_chunk.copy_from_slice(&gpu_chunk[..row_byte_ct as usize]);
+        }
+    };
+
+    buffer.unmap();
 }

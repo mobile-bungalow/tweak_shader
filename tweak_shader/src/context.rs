@@ -565,7 +565,7 @@ impl RenderContext {
             .override_texture_view_with_tex(variable_name, texture)
     }
 
-    /// Creates a texture view and maps it to the pipeline in place of a locally
+    /// maps a texture view to the pipeline in place of a locally
     /// stored texture. this will fail if you try to override a render target texture.
     pub fn load_shared_texture_view(
         &mut self,
