@@ -59,10 +59,11 @@ layout(location = 0) out vec4 out_color;
 float TAU = 6.28318530718;
 
 // get alpha from matte texture
+// assuming it's a luma matte
 float alpha(vec4 color) {
-  // wrong but fine for now
   return 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
 }
+
 const mat3 sobel_x = mat3(-1.0, 0.0, 1.0,
                          -2.0, 0.0, 2.0,
                          -1.0, 0.0, 1.0);
@@ -152,7 +153,7 @@ void main()	{
       return;
     }
 
-	  out_color =  vec4(color.rg, is_in_radius * (1.0 - show_edges) * dist_from_point, is_in_radius);
+    out_color =  vec4(color.rg, is_in_radius * (1.0 - show_edges) * dist_from_point, is_in_radius);
   } 
 }
 

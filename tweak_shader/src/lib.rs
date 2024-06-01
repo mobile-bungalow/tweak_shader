@@ -120,8 +120,6 @@
 
 pub(crate) mod context;
 pub(crate) mod parsing;
-#[cfg(feature = "after_effects")]
-pub(crate) mod preprocessing;
 pub(crate) mod uniforms;
 
 /// This module provides typesafe wrapper for internal uniform buffer data.
