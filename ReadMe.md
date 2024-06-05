@@ -96,7 +96,7 @@ syntax:
 #pragma utility_block(<uniform_type_name>)
 ```
 
-If a uniform or push constant block matches the *exact* layout of the library specified utility block specified in the example above. you can use the utility block pragma to provide fast gauranteed access to it's members from the specialized utility functions such as `update_time`, `update_resolution` and so on. field names may vary between uses safely. 
+If a uniform or push constant block matches the *exact* layout of the uniform block specified in the example above. you can use the utility block pragma to provide fast gauranteed access to it's members from the specialized utility functions such as `update_time`, `update_resolution` and so on. field names may vary between uses safely. 
 
 #### Input Types
 
@@ -173,8 +173,7 @@ syntax:
 Additional render passes and their outputs may be specified with the `pass` pragma. 
 * The passes run in the order specified by their index, and then the main pass runs. the utility blocks `pass_index` field
 is incremented by one each time a pass runs.
-* If `target` is unspecified, the pass wil write to the output frame, otherwise it will write to a context managed texture mapped
-at the specified variable.
+* If `target` is unspecified, the pass will write to the output frame, otherwise it will write to a floating point context managed texture.
 * If height, or width, is specified, the output texture will have the given height or width, defaulting to the render targets size. 
 the fields have no effect otherwise.
 
