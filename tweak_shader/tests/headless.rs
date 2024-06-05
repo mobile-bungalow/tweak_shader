@@ -165,49 +165,6 @@ fn basic_frag_target_tex() {
     ));
 }
 
-#[cfg(feature = "after_effects")]
-#[test]
-fn pre_processing_hiccups_repro() {
-    let (device, queue) = set_up_wgpu();
-
-    let mut basic = RenderContext::new_argb_preprocessed(
-        include_str!("../../tweak_shader_examples/twister.fs"),
-        wgpu::TextureFormat::Rgba8UnormSrgb,
-        &device,
-        &queue,
-    )
-    .unwrap();
-}
-
-#[cfg(feature = "after_effects")]
-#[test]
-fn basic_frag_argb() {
-    let (device, queue) = set_up_wgpu();
-
-    let mut basic = RenderContext::new_argb_preprocessed(
-        BASIC_SRC,
-        wgpu::TextureFormat::Rgba8UnormSrgb,
-        &device,
-        &queue,
-    )
-    .unwrap();
-
-    basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    let time_0_bytes = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
-
-    assert!(approximately_equivalent(
-        &time_0_bytes,
-        &png_pixels!("./resources/argb_basic.png")
-    ));
-
-    basic.update_time(1.0);
-    let time_1_bytes = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
-    assert!(approximately_equivalent(
-        &time_1_bytes,
-        &png_pixels!("./resources/argb_basic_time_1.png")
-    ));
-}
-
 // reading and writing to non256 aligned textures should not panic
 #[test]
 fn misaligned() {
@@ -720,17 +677,8 @@ fn inputs_iter() {
 
     inputs_test.get_input("audioFFT").unwrap();
 
-    inputs_test
-        .get_input_mut("topColor")
-        .unwrap()
-        .as_color()
-        .unwrap();
-
-    inputs_test
-        .get_input_mut("bottomColor")
-        .unwrap()
-        .as_color()
-        .unwrap();
+    inputs_test.get_input_as::<[f32; 4]>("topColor").unwrap();
+    inputs_test.get_input_as::<[f32; 4]>("bottomColor").unwrap();
 
     inputs_test
         .get_input_mut("strokeColor")

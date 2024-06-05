@@ -384,6 +384,17 @@ impl RenderContext {
         self.uniforms.get_input_mut(name)
     }
 
+    /// Optionally returns a reference to the underlying type of a variable in
+    /// the uniforms.
+    pub fn get_input_as<T>(&mut self, name: &str) -> Option<&mut T>
+    where
+        InputType: TryAsMut<T>,
+    {
+        self.uniforms
+            .get_input_mut(name)
+            .and_then(|i| i.inner.try_as_mut())
+    }
+
     /// Returns an option of the custom input of the given name if it exists
     pub fn get_input(&self, name: &str) -> Option<&InputType> {
         self.uniforms.get_input(name)

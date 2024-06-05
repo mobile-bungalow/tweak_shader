@@ -3,12 +3,22 @@ use bytemuck::*;
 use wgpu::naga;
 use wgpu::naga::{ScalarKind, TypeInner};
 
+/// RGBA 4 component color.
+pub type Color = [f32; 4];
+
+/// glsl 450 does not support booleans in uniforms
+/// well, so this is our friendly type alias.
+pub type ShaderBool = u32;
+
+/// User defined event codes, reset to 0 at the start of the next render.
+pub type EventCode = u32;
+
 /// A wrapper around mutable values that will be written to the custom uniforms.
 /// should be used when updating input values, i.e. when a user adjusts sliders
 /// or a host program animates and input.
 #[derive(Debug)]
 pub struct MutInput<'a> {
-    inner: &'a mut InputType,
+    pub(crate) inner: &'a mut InputType,
 }
 
 impl<'a> MutInput<'a> {
@@ -286,8 +296,8 @@ impl FromRanges<[f32; 2]> for PointInput {
 #[derive(Debug, Clone, Default)]
 #[repr(C)]
 pub struct BoolInput {
-    pub current: u32,
-    pub default: u32,
+    pub current: ShaderBool,
+    pub default: ShaderBool,
 }
 
 impl FromRanges<bool> for BoolInput {
@@ -305,8 +315,8 @@ impl FromRanges<bool> for BoolInput {
 #[derive(Debug, Clone, Default)]
 #[repr(C)]
 pub struct ColorInput {
-    pub current: [f32; 4],
-    pub default: [f32; 4],
+    pub current: Color,
+    pub default: Color,
 }
 
 impl FromRanges<[f32; 4]> for ColorInput {
@@ -388,9 +398,63 @@ pub enum InputType {
     /// ```text
     /// #pragma input(event, name="Swampus")
     /// ```
-    Event(u32),
+    Event(EventCode),
     /// The default type of any uniform with no pragma specifying how to interpret it.
     RawBytes(RawBytes),
+}
+
+pub trait TryAsMut<T> {
+    fn try_as_mut(&mut self) -> Option<&mut T>;
+}
+
+impl TryAsMut<f32> for InputType {
+    fn try_as_mut(&mut self) -> Option<&mut f32> {
+        if let InputType::Float(f) = self {
+            Some(&mut f.current)
+        } else {
+            None
+        }
+    }
+}
+
+impl TryAsMut<i32> for InputType {
+    fn try_as_mut(&mut self) -> Option<&mut i32> {
+        if let InputType::Int(i, _) = self {
+            Some(&mut i.current)
+        } else {
+            None
+        }
+    }
+}
+
+impl TryAsMut<[f32; 2]> for InputType {
+    fn try_as_mut(&mut self) -> Option<&mut [f32; 2]> {
+        if let InputType::Point(p) = self {
+            Some(&mut p.current)
+        } else {
+            None
+        }
+    }
+}
+
+impl TryAsMut<ShaderBool> for InputType {
+    fn try_as_mut(&mut self) -> Option<&mut ShaderBool> {
+        if let InputType::Bool(c) = self {
+            Some(&mut c.current)
+        } else {
+            None
+        }
+    }
+}
+
+impl TryAsMut<Color> for InputType {
+    fn try_as_mut(&mut self) -> Option<&mut Color> {
+        if let InputType::Color(c) = self {
+            Some(&mut c.current)
+        } else {
+            None
+        }
+    }
 }
 
 impl InputType {
@@ -399,6 +463,13 @@ impl InputType {
             self,
             Self::Audio(_, _) | Self::Image(_) | Self::AudioFft(_, _)
         )
+    }
+
+    pub fn as_mut<T>(&mut self) -> Option<&mut T>
+    where
+        InputType: TryAsMut<T>,
+    {
+        self.try_as_mut()
     }
 
     /// Returns the status of a still image, audio, or video variable
