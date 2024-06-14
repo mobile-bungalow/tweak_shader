@@ -54,7 +54,7 @@ void main()
  let device = // your wgpu::Device here;
  let queue = // your wgpu::Queue here;
 
- let render_context = RenderContext::new(isf_shader_source, format, &device, &queue).unwrap();
+ let render_context = RenderContext::new(src, format, &device, &queue).unwrap();
 
  let input = render_context.get_input_as<f32>("foo")?;
  input = 0.5;
