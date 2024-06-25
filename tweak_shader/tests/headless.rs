@@ -123,7 +123,7 @@ fn basic_frag_target_tex() {
     );
 
     let mut time_0_bytes =
-        vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4 as usize];
+        vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4_usize];
 
     read_texture_contents_to_slice(
         &device,

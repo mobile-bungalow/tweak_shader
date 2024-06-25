@@ -696,7 +696,7 @@ impl App {
         event: &egui_winit::winit::event::WindowEvent,
         window: &egui_winit::winit::window::Window,
     ) {
-        let _ = self.gui_context.egui_state.on_window_event(&window, event);
+        let _ = self.gui_context.egui_state.on_window_event(window, event);
         match event {
             egui_winit::winit::event::WindowEvent::Resized(size) => {
                 self.gui_context.egui_screen_desc.size_in_pixels = [size.width, size.height];
