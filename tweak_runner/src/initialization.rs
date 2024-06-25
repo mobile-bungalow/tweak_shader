@@ -20,7 +20,6 @@ use crate::app::RunnerMessage;
 pub struct GuiContext {
     pub egui_renderer: egui_wgpu::Renderer,
     pub egui_context: egui_winit::egui::Context,
-    pub id: egui_winit::egui::ViewportId,
     pub egui_state: egui_winit::State,
     pub egui_painter: egui_wgpu::winit::Painter,
     pub egui_screen_desc: ScreenDescriptor,
@@ -70,7 +69,6 @@ pub struct Resources {
     pub wgpu_device: wgpu::Device,
     pub wgpu_queue: wgpu::Queue,
     pub gui_context: GuiContext,
-    pub instance: wgpu::Instance,
 }
 
 fn create_window(event_loop: &EventLoop<RunnerMessage>) -> Result<Window, InitializationError> {
@@ -151,14 +149,10 @@ fn setup_file_watcher(
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| match res {
             Ok(event) => match event.kind {
                 EventKind::Modify(_) => {
-                    let _ = proxy.send_event(RunnerMessage::WatchedFileChanged {
-                        path: event.paths.first().unwrap().to_owned(),
-                    });
+                    let _ = proxy.send_event(RunnerMessage::WatchedFileChanged);
                 }
                 EventKind::Remove(_) => {
-                    let _ = proxy.send_event(RunnerMessage::WatchedFileDeleted {
-                        path: event.paths.first().unwrap().to_owned(),
-                    });
+                    let _ = proxy.send_event(RunnerMessage::WatchedFileDeleted);
                 }
                 _ => {}
             },
@@ -236,7 +230,6 @@ fn setup_egui(
     Ok(GuiContext {
         egui_renderer,
         egui_context,
-        id,
         egui_state,
         egui_painter,
         egui_screen_desc,
@@ -293,6 +286,5 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
         wgpu_device: device,
         wgpu_queue: queue,
         gui_context,
-        instance,
     })
 }

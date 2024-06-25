@@ -119,12 +119,8 @@ pub enum RunnerMessage {
         w: f64,
         h: f64,
     },
-    WatchedFileChanged {
-        path: PathBuf,
-    },
-    WatchedFileDeleted {
-        path: PathBuf,
-    },
+    WatchedFileChanged,
+    WatchedFileDeleted,
     UnloadAudio {
         var: String,
     },
