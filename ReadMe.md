@@ -54,10 +54,10 @@ void main()
  let device = // your wgpu::Device here;
  let queue = // your wgpu::Queue here;
 
- let render_context = RenderContext::new(isf_shader_source, format, &device, &queue).unwrap();
+ let render_context = RenderContext::new(src, format, &device, &queue).unwrap();
 
  let input = render_context.get_input_as<f32>("foo")?;
- input.current = 0.5;
+ input = 0.5;
 
  // congratulations! you now have a 255x255 pink square.
  let output = render_context.render_to_vec(&queue, &device, 255, 255);
