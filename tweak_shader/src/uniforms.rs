@@ -134,7 +134,7 @@ pub struct Uniforms {
     render_pass_targets: BTreeSet<VarName>,
     utility_block_addr: Option<VariableAddress>,
     push_constants: Option<PushConstant>,
-    sets: Vec<BindGroup>,
+    sets: Vec<TweakBindGroup>,
     utility_block_data: GlobalData,
     place_holder_texture: wgpu::Texture,
     pass_indices: wgpu::Buffer,
@@ -147,7 +147,7 @@ impl Uniforms {
         format: &wgpu::TextureFormat,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sets: Vec<BindGroup>,
+        sets: Vec<TweakBindGroup>,
         push_constants: Option<PushConstant>,
         pass_count: usize,
     ) -> Result<Self, Error> {
@@ -1121,7 +1121,7 @@ pub fn push_constant(
 }
 
 #[derive(Debug)]
-pub struct BindGroup {
+pub struct TweakBindGroup {
     // the Bind set
     pub set: u32,
     pub binding_entries: Vec<BindingEntry>,
@@ -1132,7 +1132,7 @@ pub struct BindGroup {
     pub layout: wgpu::BindGroupLayout,
 }
 
-impl BindGroup {
+impl TweakBindGroup {
     pub fn new_from_naga(
         set: u32,
         module: &naga::Module,
@@ -1140,7 +1140,7 @@ impl BindGroup {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: &wgpu::TextureFormat,
-    ) -> Result<BindGroup, Error> {
+    ) -> Result<TweakBindGroup, Error> {
         let mut layout_entries = vec![];
         let mut binding_entries = vec![];
 

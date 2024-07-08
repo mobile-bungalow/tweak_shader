@@ -25,7 +25,7 @@ pub struct RenderContext {
     streams: BTreeMap<VarName, StreamInfo>,
     texture_job_queue: BTreeMap<VarName, TextureJob>,
     user_set_up_jobs: Vec<crate::UserJobs>,
-    cpu_view_cache: Option<wgpu::Texture>,
+    cpu_view_cache: BufferCache,
 }
 
 impl RenderContext {
@@ -116,7 +116,7 @@ impl RenderContext {
         let sets = sets.iter().map(|s| *s as i32).next_back().unwrap_or(-1);
         let sets = (0..(sets + 1))
             .map(|s| {
-                uniforms::BindGroup::new_from_naga(
+                uniforms::TweakBindGroup::new_from_naga(
                     s as u32, &naga_mod, &document, device, queue, &format,
                 )
             })
@@ -206,7 +206,7 @@ impl RenderContext {
             pipeline,
             float_pipeline,
             passes: pass_structure,
-            cpu_view_cache: None,
+            cpu_view_cache: BufferCache::new(&format, 1, 1, None, device),
             texture_job_queue: BTreeMap::new(),
             streams: BTreeMap::new(),
         })
@@ -654,21 +654,16 @@ impl RenderContext {
             .block_copy_size(Some(wgpu::TextureAspect::All))
             .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
+        let fmt = self.uniforms.format();
+
         if !self
             .cpu_view_cache
-            .as_ref()
-            .is_some_and(|t| t.width() == width && t.height() == height)
+            .supports_render(&fmt, width, height, None)
         {
-            let tex = device.create_texture(&target_desc(width, height, self.uniforms.format()));
-
-            self.cpu_view_cache = Some(tex);
+            self.cpu_view_cache = BufferCache::new(&fmt, width, height, None, device);
         };
 
-        let view = self
-            .cpu_view_cache
-            .as_ref()
-            .unwrap()
-            .create_view(&Default::default());
+        let view = self.cpu_view_cache.tex().create_view(&Default::default());
 
         self.render(queue, device, &view, width, height);
 
@@ -677,7 +672,7 @@ impl RenderContext {
         read_texture_contents_to_slice(
             device,
             queue,
-            self.cpu_view_cache.as_ref().unwrap(),
+            &self.cpu_view_cache,
             height,
             width,
             None,
@@ -703,27 +698,24 @@ impl RenderContext {
         slice: &mut [u8],
         stride: Option<u32>,
     ) {
+        let fmt = self.uniforms.format();
+
         if !self
             .cpu_view_cache
-            .as_ref()
-            .is_some_and(|t| t.width() == width && t.height() == height)
+            .supports_render(&fmt, width, height, stride.map(|s| s as usize))
         {
-            let tex = device.create_texture(&target_desc(width, height, self.uniforms.format()));
-            self.cpu_view_cache = Some(tex);
+            self.cpu_view_cache =
+                BufferCache::new(&fmt, width, height, stride.map(|s| s as usize), device);
         };
 
-        let view = self
-            .cpu_view_cache
-            .as_ref()
-            .unwrap()
-            .create_view(&Default::default());
+        let view = self.cpu_view_cache.tex().create_view(&Default::default());
 
         self.render(queue, device, &view, width, height);
 
         read_texture_contents_to_slice(
             device,
             queue,
-            self.cpu_view_cache.as_ref().unwrap(),
+            &self.cpu_view_cache,
             height,
             width,
             stride,
@@ -1046,6 +1038,72 @@ impl RenderPass {
     }
 }
 
+#[derive(Debug)]
+struct BufferCache {
+    tex: wgpu::Texture,
+    /// 256 byte aligned buffer
+    buf: wgpu::Buffer,
+    stride: usize,
+}
+
+impl BufferCache {
+    pub fn new(
+        format: &wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        stride: Option<usize>,
+        device: &wgpu::Device,
+    ) -> Self {
+        let block_size = format
+            .block_copy_size(Some(wgpu::TextureAspect::All))
+            .unwrap();
+
+        let row_byte_ct = stride.unwrap_or((block_size * width) as usize);
+        let stride = (row_byte_ct + 255) & !255;
+
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Texture Read Buffer"),
+            size: (height as usize * stride) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let tex = device.create_texture(&target_desc(width, height, *format));
+
+        Self { buf, tex, stride }
+    }
+
+    //TODO: allow using subsections of the buffer and texture through views
+    // reallocating if the requested size is too small.
+    pub fn supports_render(
+        &self,
+        fmt: &wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        stride: Option<usize>,
+    ) -> bool {
+        let block_size = fmt.block_copy_size(Some(wgpu::TextureAspect::All)).unwrap() as usize;
+
+        let stride_matches = stride.is_some_and(|s| s == self.stride)
+            || (stride.is_none() && width as usize * block_size == self.stride);
+
+        self.tex.format() == *fmt
+            && self.tex.height() == height
+            && self.tex.width() == width
+            && stride_matches
+    }
+
+    pub fn tex(&self) -> &wgpu::Texture {
+        &self.tex
+    }
+
+    pub fn buf(&self) -> &wgpu::Buffer {
+        &self.buf
+    }
+}
+
+// if a texture format is used as a shader color target,
+// this returns true if it requires a vec4 color output.
 fn is_floating_point_in_shader(format: &wgpu::TextureFormat) -> bool {
     match format {
         TextureFormat::R8Uint
@@ -1168,28 +1226,12 @@ fn pretty_print_error(source: &str, location: naga::SourceLocation, kind: String
 fn read_texture_contents_to_slice(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
+    cpu_buffer_cache: &BufferCache,
     height: u32,
     width: u32,
     stride: Option<u32>,
     slice: &mut [u8],
 ) {
-    let block_size = texture
-        .format()
-        .block_copy_size(Some(wgpu::TextureAspect::All))
-        .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
-
-    let row_byte_ct = stride.unwrap_or(block_size * width);
-    let padded_row_byte_ct = (row_byte_ct + 255) & !255;
-
-    // Create a buffer to store the texture data
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Texture Read Buffer"),
-        size: (height * padded_row_byte_ct) as u64,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
     // Create a command encoder
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Texture Read Encoder"),
@@ -1197,12 +1239,12 @@ fn read_texture_contents_to_slice(
 
     // Copy the texture contents to the buffer
     encoder.copy_texture_to_buffer(
-        texture.as_image_copy(),
+        cpu_buffer_cache.tex().as_image_copy(),
         wgpu::ImageCopyBuffer {
-            buffer: &buffer,
+            buffer: &cpu_buffer_cache.buf(),
             layout: wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(padded_row_byte_ct),
+                bytes_per_row: Some(cpu_buffer_cache.stride as u32),
                 rows_per_image: None,
             },
         },
@@ -1215,13 +1257,21 @@ fn read_texture_contents_to_slice(
 
     queue.submit(Some(encoder.finish()));
 
+    let block_size = cpu_buffer_cache
+        .tex()
+        .format()
+        .block_copy_size(Some(wgpu::TextureAspect::All))
+        .unwrap();
+
+    let row_byte_ct = stride.unwrap_or(block_size * width);
+
     {
-        let buffer_slice = buffer.slice(..);
+        let buffer_slice = cpu_buffer_cache.buf.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
         device.poll(wgpu::Maintain::Wait);
 
         let gpu_slice = buffer_slice.get_mapped_range();
-        let gpu_chunks = gpu_slice.chunks(padded_row_byte_ct as usize);
+        let gpu_chunks = gpu_slice.chunks(cpu_buffer_cache.stride);
         let slice_chunks = slice.chunks_mut(row_byte_ct as usize);
         let iter = slice_chunks.zip(gpu_chunks);
 
@@ -1230,5 +1280,5 @@ fn read_texture_contents_to_slice(
         }
     };
 
-    buffer.unmap();
+    cpu_buffer_cache.buf().unmap();
 }
