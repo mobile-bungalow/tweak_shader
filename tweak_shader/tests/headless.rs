@@ -122,8 +122,7 @@ fn basic_frag_target_tex() {
         TEST_RENDER_DIM,
     );
 
-    let mut time_0_bytes =
-        vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4_usize];
+    let mut time_0_bytes = vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4_usize];
 
     read_texture_contents_to_slice(
         &device,
@@ -605,7 +604,14 @@ fn unaligned_texture_from_slice() {
     tx_load.load_texture(zac_bytes.clone(), "input_image".into(), width, height);
 
     let mut vec = vec![0u8; (width * height * 4) as usize];
-    tx_load.render_to_slice(&queue, &device, width, height, vec.as_mut_slice());
+    tx_load.render_to_slice(
+        &queue,
+        &device,
+        width,
+        height,
+        vec.as_mut_slice(),
+        Some(500 * 4),
+    );
 
     assert!(approximately_equivalent(&zac_bytes, vec.as_slice()));
 }

@@ -207,7 +207,6 @@ pub struct RawBytes {
 /// A struct representing a float input declared in the document with
 /// an input pragma.
 #[derive(Debug, Clone)]
-#[repr(C)]
 pub struct FloatInput {
     pub current: f32,
     pub min: f32,
@@ -233,7 +232,6 @@ impl FromRanges<f32> for FloatInput {
 
 /// A struct representing an int input.
 #[derive(Debug, Clone, Default)]
-#[repr(C)]
 pub struct IntInput {
     pub current: i32,
     pub min: i32,
@@ -259,7 +257,6 @@ impl FromRanges<i32> for IntInput {
 
 /// A struct representing a 2D point.
 #[derive(Debug, Clone, Default)]
-#[repr(C)]
 pub struct PointInput {
     pub current: [f32; 2],
     pub min: [f32; 2],
@@ -294,7 +291,6 @@ impl FromRanges<[f32; 2]> for PointInput {
 /// boolean values in uniform blocks. This type is only semantically
 /// different from a u32.
 #[derive(Debug, Clone, Default)]
-#[repr(C)]
 pub struct BoolInput {
     pub current: ShaderBool,
     pub default: ShaderBool,
@@ -313,7 +309,6 @@ impl FromRanges<bool> for BoolInput {
 
 /// A struct representing a color input.
 #[derive(Debug, Clone, Default)]
-#[repr(C)]
 pub struct ColorInput {
     pub current: Color,
     pub default: Color,
@@ -337,7 +332,6 @@ impl FromRanges<[f32; 4]> for ColorInput {
 /// An event input, an event is meant to be a momentary boolean value,
 /// It is only semantically different from a [BoolInput].
 #[derive(Debug, Clone, Default)]
-#[repr(C)]
 pub struct EventInput {
     pub value: u32,
 }
@@ -585,7 +579,6 @@ impl std::fmt::Display for InputType {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-#[repr(C)]
 /// A variant used to indicate the inner type of a
 /// [MutInput]
 pub enum InputVariant {

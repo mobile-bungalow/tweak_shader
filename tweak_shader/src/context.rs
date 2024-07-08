@@ -674,6 +674,7 @@ impl RenderContext {
             self.cpu_view_cache.as_ref().unwrap(),
             height,
             width,
+            None,
             &mut out,
         );
 
@@ -694,6 +695,7 @@ impl RenderContext {
         width: u32,
         height: u32,
         slice: &mut [u8],
+        stride: Option<u32>,
     ) {
         if !self
             .cpu_view_cache
@@ -718,6 +720,7 @@ impl RenderContext {
             self.cpu_view_cache.as_ref().unwrap(),
             height,
             width,
+            stride,
             slice,
         );
     }
@@ -1138,6 +1141,7 @@ fn read_texture_contents_to_slice(
     texture: &wgpu::Texture,
     height: u32,
     width: u32,
+    stride: Option<u32>,
     slice: &mut [u8],
 ) {
     let block_size = texture
@@ -1145,7 +1149,7 @@ fn read_texture_contents_to_slice(
         .block_copy_size(Some(wgpu::TextureAspect::All))
         .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
-    let row_byte_ct = block_size * width;
+    let row_byte_ct = stride.unwrap_or(block_size * width);
     let padded_row_byte_ct = (row_byte_ct + 255) & !255;
 
     // Create a buffer to store the texture data
