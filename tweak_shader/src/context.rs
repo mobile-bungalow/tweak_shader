@@ -95,11 +95,17 @@ impl RenderContext {
 
         let mut pass_structure = vec![];
 
+        let pass_texture = if is_floating_point_in_shader(&format) {
+            TextureFormat::Rgba16Float
+        } else {
+            TextureFormat::Rgba16Uint
+        };
+
         pass_structure.extend(
             document
                 .passes
                 .iter()
-                .map(|pass| RenderPass::new(pass, TextureFormat::Rgba16Float)),
+                .map(|pass| RenderPass::new(pass, pass_texture)),
         );
 
         pass_structure.push(RenderPass::new(&Default::default(), format));
@@ -180,7 +186,7 @@ impl RenderContext {
             fragment: Some(wgpu::FragmentState {
                 module: &fs_shader_module,
                 entry_point: "main",
-                targets: &[Some(wgpu::TextureFormat::Rgba16Float.into())],
+                targets: &[Some(pass_texture.into())],
             }),
             vertex: wgpu::VertexState {
                 module: &vs_shader_module,
@@ -1037,6 +1043,30 @@ impl RenderPass {
             pass_target_var_name: value.target_texture.clone(),
             render_target_texture: None,
         }
+    }
+}
+
+fn is_floating_point_in_shader(format: &wgpu::TextureFormat) -> bool {
+    match format {
+        TextureFormat::R8Uint
+        | TextureFormat::R8Sint
+        | TextureFormat::R16Uint
+        | TextureFormat::R16Sint
+        | TextureFormat::Rg8Uint
+        | TextureFormat::Rg8Sint
+        | TextureFormat::Rg16Uint
+        | TextureFormat::Rg16Sint
+        | TextureFormat::Rgba8Uint
+        | TextureFormat::Rgba8Sint
+        | TextureFormat::Rgba16Uint
+        | TextureFormat::Rgba16Sint
+        | TextureFormat::R32Uint
+        | TextureFormat::R32Sint
+        | TextureFormat::Rg32Uint
+        | TextureFormat::Rg32Sint
+        | TextureFormat::Rgba32Uint
+        | TextureFormat::Rgba32Sint => false,
+        _ => true,
     }
 }
 
