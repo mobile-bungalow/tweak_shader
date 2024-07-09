@@ -321,12 +321,12 @@ fn point_selector(ui: &mut Ui, name: &str, input: &mut tweak_shader::input_type:
         ui.label("X");
         ui.add(
             egui_winit::egui::DragValue::new(&mut input.current[0])
-                .clamp_range(input.min[0]..=input.max[0]),
+                .range(input.min[0]..=input.max[0]),
         );
         ui.label("Y");
         ui.add(
             egui_winit::egui::DragValue::new(&mut input.current[1])
-                .clamp_range(input.min[1]..=input.max[1]),
+                .range(input.min[1]..=input.max[1]),
         );
     });
 

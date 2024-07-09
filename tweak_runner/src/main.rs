@@ -112,7 +112,12 @@ fn main() {
                                 h: size.height as f64,
                             });
                         }
-                        WindowEvent::CloseRequested => control_flow.exit(),
+                        WindowEvent::CloseRequested => {
+                            // using control flow to exit causes
+                            // panics in winit 0.28
+                            process::exit(0);
+                        }
+
                         WindowEvent::Resized(size) => {
                             wgpu_surface_config.width = size.width;
                             wgpu_surface_config.height = size.height;

@@ -89,9 +89,9 @@ impl RenderContext {
 
         let mut frontend = Frontend::default();
 
-        let naga_mod = frontend
-            .parse(&options, &stripped_src)
-            .map_err(|e| Error::ShaderCompilationFailed(display_errors(&e, &stripped_src)))?;
+        let naga_mod = frontend.parse(&options, &stripped_src).map_err(|e| {
+            Error::ShaderCompilationFailed(display_errors(&e.errors, &stripped_src))
+        })?;
 
         let mut pass_structure = vec![];
 
@@ -165,11 +165,13 @@ impl RenderContext {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout: Some(&pipeline_layout),
             fragment: Some(wgpu::FragmentState {
+                compilation_options: Default::default(),
                 module: &fs_shader_module,
                 entry_point: "main",
                 targets: &[Some(format.into())],
             }),
             vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
                 module: &vs_shader_module,
                 entry_point: "vs_main",
                 buffers: &[],
@@ -185,10 +187,12 @@ impl RenderContext {
             layout: Some(&pipeline_layout),
             fragment: Some(wgpu::FragmentState {
                 module: &fs_shader_module,
+                compilation_options: Default::default(),
                 entry_point: "main",
                 targets: &[Some(pass_texture.into())],
             }),
             vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
                 module: &vs_shader_module,
                 entry_point: "vs_main",
                 buffers: &[],

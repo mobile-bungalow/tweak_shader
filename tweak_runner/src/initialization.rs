@@ -262,6 +262,12 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
 
     let error_proxy = event_loop.create_proxy();
     device.on_uncaptured_error(Box::new(move |e| match e {
+        wgpu::Error::Internal {
+            source,
+            description,
+        } => {
+            panic!("Internal error! {source} :  {description}");
+        }
         wgpu::Error::OutOfMemory { .. } => {
             panic!("Out Of GPU Memory! bailing");
         }

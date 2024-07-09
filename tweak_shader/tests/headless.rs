@@ -912,6 +912,12 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
     });
 
     d.on_uncaptured_error(Box::new(|e| match e {
+        wgpu::Error::Internal {
+            source,
+            description,
+        } => {
+            panic!("internal error: {source}, {description}");
+        }
         wgpu::Error::OutOfMemory { .. } => {
             panic!("Out Of GPU Memory! bailing");
         }
