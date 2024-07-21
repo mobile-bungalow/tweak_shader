@@ -20,12 +20,22 @@ use wgpu::TextureFormat;
 pub struct RenderContext {
     uniforms: uniforms::Uniforms,
     passes: Vec<RenderPass>,
-    pipeline: wgpu::RenderPipeline,
-    float_pipeline: wgpu::RenderPipeline,
+    pipeline: Pipeline,
     streams: BTreeMap<VarName, StreamInfo>,
     texture_job_queue: BTreeMap<VarName, TextureJob>,
     user_set_up_jobs: Vec<crate::UserJobs>,
     cpu_view_cache: BufferCache,
+}
+
+#[derive(Debug)]
+enum Pipeline {
+    Compute {
+        compute_pipeline: wgpu::ComputePipeline,
+    },
+    Pixel {
+        pipeline: wgpu::RenderPipeline,
+        float_pipeline: wgpu::RenderPipeline,
+    },
 }
 
 impl RenderContext {
@@ -123,6 +133,7 @@ impl RenderContext {
             .collect::<Result<Vec<_>, _>>()
             .map_err(crate::Error::UniformError)?;
 
+        // theres is only every one or none push constant blocks
         let push_const =
             uniforms::push_constant(&naga_mod, &document).map_err(Error::UniformError)?;
 
@@ -137,78 +148,93 @@ impl RenderContext {
         )
         .map_err(Error::UniformError)?;
 
-        let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
-        });
+        let is_compute = naga_mod
+            .entry_points
+            .iter()
+            .any(|ep| ep.stage == naga::ShaderStage::Compute);
 
-        let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "../resources/stub.wgsl"
-            ))),
-        });
+        dbg!(is_compute);
+        let pipeline = if is_compute {
+            todo!();
+        } else {
+            let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+            });
 
-        let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
+            let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+                    "../resources/stub.wgsl"
+                ))),
+            });
 
-        let push_constant_ranges = uniforms
-            .push_constant_ranges()
-            .map(|e| vec![e])
-            .unwrap_or(vec![]);
+            let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Main Pipeline Layout"),
-            bind_group_layouts: bind_group_layouts.as_slice(),
-            push_constant_ranges: &push_constant_ranges,
-        });
+            let push_constant_ranges = uniforms
+                .push_constant_ranges()
+                .map(|e| vec![e])
+                .unwrap_or(vec![]);
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: Some(&pipeline_layout),
-            fragment: Some(wgpu::FragmentState {
-                compilation_options: Default::default(),
-                module: &fs_shader_module,
-                entry_point: "main",
-                targets: &[Some(format.into())],
-            }),
-            vertex: wgpu::VertexState {
-                compilation_options: Default::default(),
-                module: &vs_shader_module,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview: None,
-            label: None,
-        });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Main Pipeline Layout"),
+                bind_group_layouts: bind_group_layouts.as_slice(),
+                push_constant_ranges: &push_constant_ranges,
+            });
 
-        let float_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: Some(&pipeline_layout),
-            fragment: Some(wgpu::FragmentState {
-                module: &fs_shader_module,
-                compilation_options: Default::default(),
-                entry_point: "main",
-                targets: &[Some(pass_texture.into())],
-            }),
-            vertex: wgpu::VertexState {
-                compilation_options: Default::default(),
-                module: &vs_shader_module,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview: None,
-            label: None,
-        });
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                layout: Some(&pipeline_layout),
+                fragment: Some(wgpu::FragmentState {
+                    compilation_options: Default::default(),
+                    module: &fs_shader_module,
+                    entry_point: "main",
+                    targets: &[Some(format.into())],
+                }),
+                vertex: wgpu::VertexState {
+                    compilation_options: Default::default(),
+                    module: &vs_shader_module,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                label: None,
+            });
+
+            // HDR pipeline for internal render passes
+            let float_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                layout: Some(&pipeline_layout),
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs_shader_module,
+                    compilation_options: Default::default(),
+                    entry_point: "main",
+                    targets: &[Some(pass_texture.into())],
+                }),
+                vertex: wgpu::VertexState {
+                    compilation_options: Default::default(),
+                    module: &vs_shader_module,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                label: None,
+            });
+
+            Pipeline::Pixel {
+                pipeline,
+                float_pipeline,
+            }
+        };
 
         Ok(RenderContext {
             uniforms,
             user_set_up_jobs,
             pipeline,
-            float_pipeline,
             passes: pass_structure,
             cpu_view_cache: BufferCache::new(&format, 1, 1, None, device),
             texture_job_queue: BTreeMap::new(),
@@ -257,6 +283,33 @@ impl RenderContext {
         // write changes to uniforms to gpu mapped buffers
         self.uniforms.update_uniform_buffers(device, queue);
 
+        match &self.pipeline {
+            Pipeline::Compute { .. } => {
+                let _ = ();
+            }
+            Pipeline::Pixel { .. } => {
+                self.encode_pixel_render(queue, device, command_encoder, view, width, height);
+            }
+        }
+    }
+
+    fn encode_pixel_render(
+        &mut self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        command_encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        let Pipeline::Pixel {
+            ref pipeline,
+            ref float_pipeline,
+        } = self.pipeline
+        else {
+            return;
+        };
+
         for (idx, pass) in self.passes.iter().enumerate() {
             self.uniforms.set_pass_index(idx, command_encoder);
 
@@ -278,7 +331,7 @@ impl RenderContext {
                     depth_stencil_attachment: None,
                 });
 
-                rpass.set_pipeline(&self.float_pipeline);
+                rpass.set_pipeline(&float_pipeline);
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }
@@ -302,7 +355,7 @@ impl RenderContext {
                     depth_stencil_attachment: None,
                 });
 
-                rpass.set_pipeline(&self.pipeline);
+                rpass.set_pipeline(&pipeline);
                 rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);

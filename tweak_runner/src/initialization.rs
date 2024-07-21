@@ -99,7 +99,8 @@ fn create_device(
     pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: None,
-            required_features: wgpu::Features::PUSH_CONSTANTS,
+            required_features: wgpu::Features::PUSH_CONSTANTS
+                | wgpu::Features::VERTEX_WRITABLE_STORAGE,
             required_limits,
         },
         None,

@@ -1171,21 +1171,21 @@ impl TweakBindGroup {
                     size: _,
                     stride: _,
                 } => {
-                    return Err(Error::UnsupportedUniformType("Error loading uniform with an array type. We do not support uniform arrays at this time.".into()))
+                    // How would we even support these?
+                    return Err(Error::UnsupportedUniformType("Error loading uniform with an array type. We do not support uniform arrays at this time.".into()));
                 }
                 naga::TypeInner::Struct { members, span } => {
-
                     let entry = BindingEntry::new(
                         device,
                         module,
                         document,
                         StructDescriptor {
-                                padded_size: *span as usize,
-                                name: ty.name.clone().unwrap_or_default(),
-                                storage,
-                                binding,
-                                members: members.as_slice()
-                        }
+                            padded_size: *span as usize,
+                            name: ty.name.clone().unwrap_or_default(),
+                            storage,
+                            binding,
+                            members: members.as_slice(),
+                        },
                     )?;
 
                     binding_entries.push(entry);
