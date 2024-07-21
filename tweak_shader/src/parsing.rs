@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::input_type::{EventInput, InputType, TextureStatus};
+use crate::input_type::{DiscreteInput, EventCode, InputType, ShaderBool, TextureStatus};
 use std::fmt;
 
 #[derive(Debug)]
@@ -186,12 +186,19 @@ pub fn parse_document(input: &str) -> Result<DocumentDescriptor, Error> {
                     desc.inputs.insert(name, InputType::Point(point));
                 }
                 [(QVal::Id(id), None), rest @ ..] if id == "event" => {
-                    let (name, _) = create_input::<(), EventInput>(rest)
+                    let (name, _) = create_input::<EventCode, DiscreteInput<EventCode>>(rest)
                         .map_err(|e| map_input_err(e, pragma))?;
-                    desc.inputs.insert(name, InputType::Event(0));
+                    desc.inputs.insert(
+                        name,
+                        InputType::Event(DiscreteInput {
+                            default: 0,
+                            current: 0,
+                        }),
+                    );
                 }
                 [(QVal::Id(id), None), rest @ ..] if id == "bool" => {
-                    let (name, booli) = create_input(rest).map_err(|e| map_input_err(e, pragma))?;
+                    let (name, booli) = create_input::<ShaderBool, _>(rest)
+                        .map_err(|e| map_input_err(e, pragma))?;
                     desc.inputs.insert(name, InputType::Bool(booli));
                 }
                 [(QVal::Id(id), None), rest @ ..] if id == "image" => {
@@ -765,12 +772,12 @@ mod tests {
 
         assert!(matches!(
             out.inputs.get("foo").unwrap(),
-            InputType::Point(crate::input_type::PointInput { .. })
+            InputType::Point(crate::input_type::BoundedInput { .. })
         ));
 
         assert!(matches!(
             out.inputs.get("third").unwrap(),
-            InputType::Color(crate::input_type::ColorInput { .. })
+            InputType::Color(crate::input_type::DiscreteInput { .. })
         ));
 
         assert_eq!(out.version, 3.0);

@@ -212,7 +212,7 @@ fn input_widget(
         }
         InputVariant::Event => {
             let trigger = val.as_event().unwrap();
-            *trigger = if ui.button(name).clicked() { 1 } else { 0 };
+            trigger.current = if ui.button(name).clicked() { 1 } else { 0 };
         }
         InputVariant::Bool => {
             let v = val.as_bool().unwrap();
@@ -315,7 +315,11 @@ fn file_selector(
     });
 }
 
-fn point_selector(ui: &mut Ui, name: &str, input: &mut tweak_shader::input_type::PointInput) {
+fn point_selector(
+    ui: &mut Ui,
+    name: &str,
+    input: &mut tweak_shader::input_type::BoundedInput<[f32; 2]>,
+) {
     ui.horizontal(|ui| {
         ui.label(name);
         ui.label("X");
