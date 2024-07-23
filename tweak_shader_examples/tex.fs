@@ -15,11 +15,11 @@ layout(push_constant) uniform ShaderInputs {
 
 layout(location = 0) out vec4 out_color; 
 
-#pragma input(image, name="input_image", path="./demo.png")
+#pragma sampler(name="default_sampler", linear)
 layout(set=0, binding=1) uniform sampler default_sampler;
+
+#pragma input(image, name="input_image", path="./demo.png")
 layout(set=0, binding=2) uniform texture2D input_image;
-
-
 
 void main() {
 	vec2 uv = gl_FragCoord.xy / resolution.xy;

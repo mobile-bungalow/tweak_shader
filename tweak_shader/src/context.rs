@@ -31,6 +31,7 @@ pub struct RenderContext {
 enum Pipeline {
     Compute {
         compute_pipeline: wgpu::ComputePipeline,
+        workgroups: [u32; 3],
     },
     Pixel {
         pipeline: wgpu::RenderPipeline,
@@ -91,7 +92,7 @@ impl RenderContext {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut options = Options::from(ShaderStage::Fragment);
+        let mut options = Options::from(document.stage);
 
         options
             .defines
@@ -124,6 +125,7 @@ impl RenderContext {
         // some might be empty.
         let sets = uniforms::sets(&naga_mod);
         let sets = sets.iter().map(|s| *s as i32).next_back().unwrap_or(-1);
+
         let sets = (0..(sets + 1))
             .map(|s| {
                 uniforms::TweakBindGroup::new_from_naga(
@@ -133,7 +135,7 @@ impl RenderContext {
             .collect::<Result<Vec<_>, _>>()
             .map_err(crate::Error::UniformError)?;
 
-        // theres is only every one or none push constant blocks
+        // theres is only every 1 or 0 push constant blocks
         let push_const =
             uniforms::push_constant(&naga_mod, &document).map_err(Error::UniformError)?;
 
@@ -148,14 +150,38 @@ impl RenderContext {
         )
         .map_err(Error::UniformError)?;
 
-        let is_compute = naga_mod
-            .entry_points
-            .iter()
-            .any(|ep| ep.stage == naga::ShaderStage::Compute);
+        let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
 
-        dbg!(is_compute);
-        let pipeline = if is_compute {
-            todo!();
+        let push_constant_ranges = uniforms
+            .push_constant_ranges()
+            .map(|e| vec![e])
+            .unwrap_or(vec![]);
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Main Pipeline Layout"),
+            bind_group_layouts: bind_group_layouts.as_slice(),
+            push_constant_ranges: &push_constant_ranges,
+        });
+
+        let pipeline = if document.stage == ShaderStage::Compute {
+            let compute_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+            });
+
+            let compute_pipeline =
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: None,
+                    layout: Some(&pipeline_layout),
+                    module: &compute_mod,
+                    entry_point: "main",
+                    compilation_options: Default::default(),
+                });
+
+            Pipeline::Compute {
+                compute_pipeline,
+                workgroups: uniforms::work_groups_from_naga(&naga_mod),
+            }
         } else {
             let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
@@ -167,19 +193,6 @@ impl RenderContext {
                 source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
                     "../resources/stub.wgsl"
                 ))),
-            });
-
-            let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
-
-            let push_constant_ranges = uniforms
-                .push_constant_ranges()
-                .map(|e| vec![e])
-                .unwrap_or(vec![]);
-
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Main Pipeline Layout"),
-                bind_group_layouts: bind_group_layouts.as_slice(),
-                push_constant_ranges: &push_constant_ranges,
             });
 
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -285,12 +298,51 @@ impl RenderContext {
 
         match &self.pipeline {
             Pipeline::Compute { .. } => {
-                let _ = ();
+                self.encode_compute_render(queue, device, command_encoder, view, width, height);
             }
             Pipeline::Pixel { .. } => {
                 self.encode_pixel_render(queue, device, command_encoder, view, width, height);
             }
         }
+    }
+
+    fn encode_compute_render(
+        &mut self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        command_encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        {
+            let Pipeline::Compute {
+                ref compute_pipeline,
+                workgroups: [x, y, z],
+            } = self.pipeline
+            else {
+                return;
+            };
+
+            let mut rpass = command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+
+            rpass.set_pipeline(&compute_pipeline);
+
+            for (set, bind_group) in self.uniforms.iter_sets() {
+                rpass.set_bind_group(set, bind_group, &[]);
+            }
+
+            if let Some(bytes) = self.uniforms.push_constant_bytes() {
+                rpass.set_push_constants(0, bytes);
+            }
+
+            rpass.dispatch_workgroups(x, y, z);
+        }
+
+        self.post_render();
     }
 
     fn encode_pixel_render(
@@ -338,6 +390,7 @@ impl RenderContext {
                 if let Some(bytes) = self.uniforms.push_constant_bytes() {
                     rpass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytes);
                 }
+
                 rpass.draw(0..3, 0..1);
             } else {
                 let mut rpass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -356,7 +409,7 @@ impl RenderContext {
                 });
 
                 rpass.set_pipeline(&pipeline);
-                rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }

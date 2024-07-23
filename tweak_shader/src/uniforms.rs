@@ -1,11 +1,11 @@
 use crate::input_type::*;
-use crate::parsing::DocumentDescriptor;
+use crate::parsing::Document;
 use __core::num::NonZeroU32;
 use bytemuck::{checked::cast_slice, offset_of};
 use naga::{AddressSpace, ResourceBinding, StorageAccess, StructMember};
 use wgpu::{naga, TextureFormat};
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use bytemuck::*;
 use wgpu::{util::DeviceExt, BufferUsages};
@@ -131,7 +131,7 @@ struct VariableAddress {
 #[derive(Debug)]
 pub struct Uniforms {
     lookup_table: BTreeMap<VarName, VariableAddress>,
-    render_pass_targets: BTreeSet<VarName>,
+    private_textures: HashSet<VarName>,
     utility_block_addr: Option<VariableAddress>,
     push_constants: Option<PushConstant>,
     sets: Vec<TweakBindGroup>,
@@ -143,7 +143,7 @@ pub struct Uniforms {
 
 impl Uniforms {
     pub fn new(
-        desc: &DocumentDescriptor,
+        document: &Document,
         format: &wgpu::TextureFormat,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -203,7 +203,7 @@ impl Uniforms {
         }
 
         // Look for input pragmas that are missing targets
-        let missing_input: Vec<_> = desc
+        let missing_input: Vec<_> = document
             .inputs
             .keys()
             .filter(|key| {
@@ -235,9 +235,9 @@ impl Uniforms {
             .is_some_and(|p| matches!(p, PushConstant::UtilityBlock { .. }));
 
         // error out early a utility block was specified and not found
-        if desc.utility_block_name.is_some() && no_util_present && !push_is_util {
+        if document.utility_block_name.is_some() && no_util_present && !push_is_util {
             Err(Error::UtilityBlockMissing(
-                desc.utility_block_name.as_ref().unwrap().clone(),
+                document.utility_block_name.as_ref().unwrap().clone(),
             ))?;
         }
 
@@ -251,11 +251,18 @@ impl Uniforms {
         let mut utility_block_data: GlobalData = bytemuck::Zeroable::zeroed();
         utility_block_data.mouse = [0.0, 0.0, -0.0, -0.0];
 
-        let render_pass_targets = desc
+        let mut private_textures: HashSet<_> = document
             .passes
             .iter()
             .filter_map(|pass| pass.target_texture.clone())
             .collect();
+
+        for (name, _) in lookup_table.iter() {
+            let texture_not_in_doc = document.inputs.get(name).is_none();
+            if texture_not_in_doc {
+                private_textures.insert(name.to_owned());
+            }
+        }
 
         let contents = (0..pass_count as u32).collect::<Vec<u32>>();
 
@@ -271,7 +278,7 @@ impl Uniforms {
         Ok(Self {
             pass_indices,
             push_constants,
-            render_pass_targets,
+            private_textures,
             utility_block_addr,
             lookup_table,
             sets,
@@ -333,7 +340,7 @@ impl Uniforms {
                     continue;
                 };
 
-                let new_tex = if other.render_pass_targets.contains(name) {
+                let new_tex = if other.private_textures.contains(name) {
                     let mut desc = txtr_desc(width, height);
                     desc.format = wgpu::TextureFormat::Rgba16Float;
                     device.create_texture(&desc)
@@ -395,7 +402,7 @@ impl Uniforms {
     }
 
     pub fn unload_texture(&mut self, var: &str) -> bool {
-        if self.render_pass_targets.contains(var) {
+        if self.private_textures.contains(var) {
             return false;
         }
 
@@ -682,7 +689,7 @@ impl Uniforms {
             .iter_mut()
             .flat_map(|b| b.binding_entries.iter_mut());
 
-        let render_pass_targets = &self.render_pass_targets;
+        let private_textures = &self.private_textures;
 
         std::iter::from_fn(move || {
             if let Some(push_constant) = push.as_mut().and_then(|iter| iter.next()) {
@@ -697,7 +704,7 @@ impl Uniforms {
                                 .filter(|(_, ty)| !matches!(ty, InputType::RawBytes(_))),
                         ),
                         BindingEntry::Texture { input, name, .. } => {
-                            if render_pass_targets.contains(name) {
+                            if private_textures.contains(name) {
                                 None
                             } else {
                                 return Some((name.as_str(), input.into()));
@@ -731,7 +738,7 @@ impl Uniforms {
 
         let mut field_iter = None;
         let mut iter = self.sets.iter().flat_map(|b| b.binding_entries.iter());
-        let set_ref = &self.render_pass_targets;
+        let set_ref = &self.private_textures;
 
         std::iter::from_fn(move || {
             if let Some(push_constant) = push.as_mut().and_then(|iter| iter.next()) {
@@ -912,7 +919,7 @@ impl BindingEntry {
     fn new(
         device: &wgpu::Device,
         module: &naga::Module,
-        document: &crate::parsing::DocumentDescriptor,
+        document: &crate::parsing::Document,
         desc: StructDescriptor,
     ) -> Result<Self, Error> {
         let StructDescriptor {
@@ -1038,7 +1045,7 @@ pub enum PushConstant {
 
 pub fn push_constant(
     module: &naga::Module,
-    document: &crate::parsing::DocumentDescriptor,
+    document: &crate::parsing::Document,
 ) -> Result<Option<PushConstant>, Error> {
     let mut out = None;
 
@@ -1136,7 +1143,7 @@ impl TweakBindGroup {
     pub fn new_from_naga(
         set: u32,
         module: &naga::Module,
-        document: &crate::parsing::DocumentDescriptor,
+        document: &Document,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: &wgpu::TextureFormat,
@@ -1217,21 +1224,64 @@ impl TweakBindGroup {
 
                     let entry = image_entry_from_naga(class, dim, *arrayed, binding, format);
 
+                    // create placeholder data
+                    let (tex, view) =
+                        if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
+                            let pixel_size = format.block_copy_size(None).unwrap();
+
+                            let place_holder_texture = device.create_texture_with_data(
+                                queue,
+                                &storage_desc(1, 1, format),
+                                Default::default(),
+                                &vec![0; pixel_size as usize],
+                            );
+
+                            let mut view_desc = DEFAULT_VIEW;
+                            view_desc.format = Some(format);
+
+                            let placeholder_view = place_holder_texture.create_view(&view_desc);
+
+                            (Some(place_holder_texture), Some(placeholder_view))
+                        } else {
+                            (None, None)
+                        };
+
                     layout_entries.push(entry);
 
                     binding_entries.push(BindingEntry::Texture {
                         binding,
-                        tex: None,
-                        view: None,
+                        tex,
+                        view,
                         name: uniform.name.clone().unwrap_or_default(),
                         input: input.clone(),
                         storage,
                     });
                 }
                 naga::TypeInner::Sampler { .. } => {
+                    let mut samp_desc = DEFAULT_SAMPLER;
+                    if let Some(name) = uniform.name.as_ref() {
+                        if let Some(config) = document.samplers.get(name) {
+                            samp_desc.mag_filter = config.filter_mode;
+                            samp_desc.min_filter = config.filter_mode;
+                            samp_desc.mipmap_filter = config.filter_mode;
+
+                            samp_desc.address_mode_u = config.clamp_mode;
+                            samp_desc.address_mode_v = config.clamp_mode;
+                            samp_desc.address_mode_w = config.clamp_mode;
+                        }
+                    };
+
+                    if matches!(format, wgpu::TextureFormat::Rgba32Float) {
+                        samp_desc.mag_filter = wgpu::FilterMode::Nearest;
+                        samp_desc.min_filter = wgpu::FilterMode::Nearest;
+                        samp_desc.mipmap_filter = wgpu::FilterMode::Nearest;
+                    };
+
+                    let samp = device.create_sampler(&samp_desc);
+
                     binding_entries.push(BindingEntry::Sampler {
                         binding,
-                        samp: None,
+                        samp: Some(samp),
                         name: uniform.name.clone().unwrap_or_default(),
                     });
 
@@ -1544,6 +1594,14 @@ impl TweakBindGroup {
     }
 }
 
+pub fn work_groups_from_naga(module: &naga::Module) -> [u32; 3] {
+    module
+        .entry_points
+        .first()
+        .map(|e| e.workgroup_size)
+        .expect("no entry point???")
+}
+
 fn image_entry_from_naga(
     class: &naga::ImageClass,
     dim: &naga::ImageDimension,
@@ -1560,7 +1618,7 @@ fn image_entry_from_naga(
                 view_dimension: image_dim(dim),
                 multisampled: *multi,
             },
-            visibility: ShaderStages::VERTEX_FRAGMENT,
+            visibility: ShaderStages::all(),
             binding,
             count,
         },
@@ -1570,7 +1628,7 @@ fn image_entry_from_naga(
                 view_dimension: image_dim(dim),
                 multisampled: *multi,
             },
-            visibility: ShaderStages::VERTEX_FRAGMENT,
+            visibility: ShaderStages::all(),
             binding,
             count,
         },
@@ -1582,7 +1640,7 @@ fn image_entry_from_naga(
             },
             binding,
             count,
-            visibility: ShaderStages::VERTEX_FRAGMENT,
+            visibility: ShaderStages::all(),
         },
     }
 }
@@ -1676,6 +1734,30 @@ fn txtr_desc(width: u32, height: u32) -> wgpu::TextureDescriptor<'static> {
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    }
+}
+
+fn storage_desc(
+    width: u32,
+    height: u32,
+    fmt: wgpu::TextureFormat,
+) -> wgpu::TextureDescriptor<'static> {
+    wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1, // crunch crunch
+        dimension: wgpu::TextureDimension::D2,
+        format: fmt,
+        usage: wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::STORAGE_BINDING
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],

@@ -11,11 +11,13 @@ pub enum Error {
     InvalidMaxSamples(String),
     InputPathNotString(String, String),
     InvalidPassDescriptor(String),
+    InvalidSamplerDescriptor(String),
     MalformedPass(String, String),
     InvalidVersion(String),
     Parsing(String),
     MultipleUtilityBlocks,
     MalformedUtilityBlock(String),
+    StageSpecifier(String),
     MalformedIntList(String),
     UnexpectedType(String),
     Input(String, String),
@@ -75,8 +77,17 @@ impl fmt::Display for Error {
                     "Invalid pass directive {pragma}: needs an index specifier as the first field, such as #pragma pass(1)."
                 )
             }
+            Error::InvalidSamplerDescriptor(pragma) => {
+                write!(
+                    f,
+                    "Invalid sampler directive {pragma}: must be of the form #pragma sampler(name='foo', linear|nearest, clamp|repeat|mirror)."
+                )
+            }
             Error::Parsing(msg) => {
                 write!(f, "Error in input: {msg}")
+            }
+            Error::StageSpecifier(pragma) => {
+                write!(f, "There must only be one stage spacifier of the form: #pragma stage('compute'|'fragment'), found {pragma}")
             }
         }
     }
@@ -110,12 +121,12 @@ pub struct RenderPass {
 
 #[derive(Debug, Clone, Default)]
 pub struct SamplerDesc {
-    filter_mode: wgpu::FilterMode,
-    clamp_mode: wgpu::AddressMode,
+    pub filter_mode: wgpu::FilterMode,
+    pub clamp_mode: wgpu::AddressMode,
 }
 
 #[derive(Debug, Clone)]
-pub struct DocumentDescriptor {
+pub struct Document {
     // it's an f32 for convenience sake
     pub version: f32,
     pub utility_block_name: Option<String>,
@@ -126,8 +137,8 @@ pub struct DocumentDescriptor {
     pub samplers: BTreeMap<String, SamplerDesc>,
 }
 
-pub fn parse_document(input: &str) -> Result<DocumentDescriptor, Error> {
-    let mut desc = DocumentDescriptor {
+pub fn parse_document(input: &str) -> Result<Document, Error> {
+    let mut desc = Document {
         utility_block_name: None,
         stage: wgpu::naga::ShaderStage::Fragment,
         version: 1.0,
@@ -146,6 +157,36 @@ pub fn parse_document(input: &str) -> Result<DocumentDescriptor, Error> {
 
         if let Some(version) = seek::<f32>(&list, "version") {
             desc.version = version.map_err(|_| Error::InvalidVersion(rest.to_owned()))?;
+        }
+    }
+
+    let mut stage = input
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("#pragma stage"));
+
+    if let Some(rest) = stage.next() {
+        let (_, list) = parse_qualifier_list(rest).map_err(|e| display_err(rest, e))?;
+        match list.as_slice() {
+            [(QVal::Id(id), None), ..] => {
+                match id.as_str() {
+                    "fragment" => {
+                        desc.stage = ShaderStage::Fragment;
+                    }
+                    "compute" => {
+                        desc.stage = ShaderStage::Compute;
+                    }
+                    _ => {}
+                };
+
+                if stage.next().is_none() {
+                    desc.utility_block_name = Some(id.clone());
+                } else {
+                    Err(Error::StageSpecifier(rest.to_owned()))?;
+                }
+            }
+            _ => {
+                Err(Error::StageSpecifier(rest.to_owned()))?;
+            }
         }
     }
 
@@ -183,6 +224,54 @@ pub fn parse_document(input: &str) -> Result<DocumentDescriptor, Error> {
             }
             _ => {
                 Err(Error::InvalidPassDescriptor(pass.into()))?;
+            }
+        }
+    }
+
+    let samplers = input
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("#pragma sampler"));
+
+    for sampler in samplers {
+        let (_, list) = parse_qualifier_list(sampler).map_err(|e| display_err(sampler, e))?;
+
+        let [(QVal::Id(name_literal), Some(QVal::String(name))), rest @ ..] = list.as_slice()
+        else {
+            return Err(Error::InvalidSamplerDescriptor(sampler.into()));
+        };
+
+        match (name_literal.as_str(), name, rest) {
+            ("name", name, rest) => {
+                let mut filter_mode = wgpu::FilterMode::Nearest;
+                let mut clamp_mode = wgpu::AddressMode::ClampToEdge;
+
+                for item in rest {
+                    let (QVal::Id(specifier), None) = item else {
+                        return Err(Error::InvalidSamplerDescriptor(sampler.into()));
+                    };
+
+                    match specifier.as_str() {
+                        "linear" => filter_mode = wgpu::FilterMode::Linear,
+                        "nearest" => filter_mode = wgpu::FilterMode::Nearest,
+                        "clamp" => clamp_mode = wgpu::AddressMode::ClampToEdge,
+                        "repeat" => clamp_mode = wgpu::AddressMode::Repeat,
+                        "mirror" => clamp_mode = wgpu::AddressMode::MirrorRepeat,
+                        _ => {
+                            return Err(Error::InvalidPassDescriptor(sampler.into()));
+                        }
+                    }
+
+                    desc.samplers.insert(
+                        name.to_owned(),
+                        SamplerDesc {
+                            filter_mode,
+                            clamp_mode,
+                        },
+                    );
+                }
+            }
+            _ => {
+                return Err(Error::InvalidPassDescriptor(sampler.into()));
             }
         }
     }
@@ -536,6 +625,7 @@ use nom::{
     sequence::{delimited, pair, preceded, separated_pair, tuple},
     IResult as DumbResult,
 };
+use wgpu::naga::ShaderStage;
 
 pub type IResult<I, O, E = VerboseError<I>> = DumbResult<I, O, E>;
 
@@ -750,6 +840,21 @@ mod tests {
     fn simple_parse_doc() {
         let pragma = "#pragma input(float, name=test)";
         parse_document(pragma).unwrap();
+
+        let pragma = "#pragma sampler(name=josh)";
+        parse_document(pragma).unwrap();
+
+        let pragma = "#pragma sampler(name=josh, linear)";
+        parse_document(pragma).unwrap();
+
+        let pragma = "#pragma stage(name=josh)";
+        assert!(parse_document(pragma).is_err());
+
+        let pragma = "#pragma stage(compute)";
+        parse_document(pragma).unwrap();
+
+        let pragma = "#pragma sampler(name=josh, fake)";
+        assert!(parse_document(pragma).is_err());
 
         let pragma = "#pragma input(float, name=\"test\")";
         parse_document(pragma).unwrap();
