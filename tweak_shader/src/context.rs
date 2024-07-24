@@ -559,53 +559,9 @@ impl RenderContext {
         }
     }
 
-    /// Provides access to the raw byte array of rgba8unormsrgb
-    /// formatted pixels that will be uploaded into the texture
-    /// with name `name`. This causes the context to allocate memory
-    /// large enough to store a frame of your video until you call
-    /// [`RenderContext::remove_texture`].
-    pub fn load_video_stream_raw<S: AsRef<str>>(
-        &mut self,
-        name: S,
-        height: u32,
-        width: u32,
-    ) -> Option<&mut [u8]> {
-        if self.streams.get_mut(name.as_ref()).is_some() {
-            // weird borrow checker nuance
-            let stream = self.streams.get_mut(name.as_ref()).unwrap();
-            match stream {
-                StreamInfo::Video { dirty, data, .. } => {
-                    *dirty = true;
-                    Some(data.as_mut_slice())
-                }
-                _ => None,
-            }
-        } else if self
-            .uniforms
-            .get_input_mut(name.as_ref())
-            .is_some_and(|ty| matches!(ty.variant(), InputVariant::Image))
-        {
-            let val = StreamInfo::Video {
-                dirty: true,
-                height,
-                width,
-                data: vec![0; (height * width * 4) as usize],
-            };
-            self.streams.insert(name.as_ref().to_owned(), val);
-            if let StreamInfo::Video { data, .. } = self.streams.get_mut(name.as_ref())? {
-                Some(data.as_mut_slice())
-            } else {
-                // unreachable
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     /// Loads a texture of the specified format into the variable with name `name`
     /// immediately.
-    pub fn load_image_immediate<S: AsRef<str>>(
+    pub fn load_texture_immediate<S: AsRef<str>>(
         &mut self,
         name: S,
         height: u32,

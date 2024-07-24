@@ -10,11 +10,6 @@ description = "A simple wgpu helper library for building flexible screen shaders
 
 [features]
 default = []
-video = ["ffmpeg-next"]
-
-[dependencies.ffmpeg-next]
-version = "6.0.0" 
-optional = true
 
 [dependencies]
 wgpu = { version = "0.20.0", features = ["glsl", "naga-ir"] }

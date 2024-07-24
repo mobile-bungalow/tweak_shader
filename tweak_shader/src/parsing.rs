@@ -832,9 +832,7 @@ mod tests {
             #pragma input(color, name=third, default = [1.0, 0.0, 0.0, 3.0])
 
             #pragma input(int, name="good", max=100, min=200, default=3)
-
-            #pragma input(event, name="jim")
-            
+ 
             #pragma input  (point , name="foo", max = [100.0, 200.0])
 
             #pragma pass(1, persistent, target="something")
@@ -846,7 +844,7 @@ mod tests {
 
         let out = parse_document(pragma).unwrap();
 
-        assert_eq!(out.inputs.len(), 6);
+        assert_eq!(out.inputs.len(), 5);
 
         assert!(matches!(
             out.inputs.get("foo").unwrap(),

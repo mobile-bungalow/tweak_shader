@@ -108,7 +108,6 @@ const INPUTS: &str = r"
 #pragma input(point, name=bar)
 #pragma input(color, name=baz)
 #pragma input(bool, name=qux)
-#pragma input(event, name=qux_1)
 layout(set = 0, binding = 0) uniform ShaderInputs {
     float foo;
     vec2 bar;
@@ -137,7 +136,6 @@ fn all_input_types() {
     assert!(matches!(res.get_input("bar"), Some(InputType::Point(_))));
     assert!(matches!(res.get_input("baz"), Some(InputType::Color(_))));
     assert!(matches!(res.get_input("qux"), Some(InputType::Bool(_))));
-    assert!(matches!(res.get_input("qux_1"), Some(InputType::Event(_))));
 }
 
 const MISSING_INPUTS: &str = r"

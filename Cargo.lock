@@ -2530,6 +2530,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_plot",
+ "ffmpeg-next",
  "image",
  "notify",
  "pollster",
@@ -2544,7 +2545,6 @@ name = "tweak_shader"
 version = "0.3.3"
 dependencies = [
  "bytemuck",
- "ffmpeg-next",
  "image",
  "nom",
  "pollster",

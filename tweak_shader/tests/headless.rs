@@ -658,15 +658,9 @@ layout(push_constant) uniform PushCustomInput {
   float pushgain;
 };
 
-#pragma input(audiofft, name="audioFFT", path="./audio.mp3")
 layout(set=0, binding=1) uniform sampler default_sampler;
-layout(set=0, binding=2) uniform texture2D audioFFT;
 
-void main() {
-    // Again, this test fails if you don't reference ABSOLUTELY every uniform
-	out_color = texture(sampler2D(audioFFT, default_sampler), vec2(0.0, 0.0));
-	out_color = strokeColor;
-}
+void main() {}
 "#;
 
 #[test]
@@ -680,8 +674,6 @@ fn inputs_iter() {
         &queue,
     )
     .unwrap();
-
-    inputs_test.get_input("audioFFT").unwrap();
 
     inputs_test.get_input_as::<[f32; 4]>("topColor").unwrap();
     inputs_test.get_input_as::<[f32; 4]>("bottomColor").unwrap();
@@ -705,7 +697,6 @@ fn inputs_iter() {
         "minRange",
         "maxRange",
         "gain",
-        "audioFFT",
         "pushtopColor",
         "pushbottomColor",
         "pushstrokeColor",

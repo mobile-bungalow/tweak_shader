@@ -14,6 +14,7 @@ use std::process::exit;
 mod app;
 mod initialization;
 mod ui;
+mod video;
 
 fn main() {
     let (path, shader_source) = parse_commands();

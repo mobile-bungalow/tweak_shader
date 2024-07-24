@@ -125,12 +125,6 @@ pub(crate) mod uniforms;
 /// This module provides typesafe wrapper for internal uniform buffer data.
 pub mod input_type;
 
-/// Requires the `video` feature, provides a convenient type
-/// for loading and buffering video. note that this is fairly memory
-/// intensive.
-#[cfg(feature = "video")]
-pub mod video;
-
 pub use wgpu;
 // the main rendering context.
 pub use context::RenderContext;

@@ -2,13 +2,10 @@ use crate::initialization::GuiContext;
 use crate::read_file;
 use crate::ui;
 use crate::ui::UiState;
+use crate::video::{VideoLoader, VideoLoaderTrait};
 
 use chrono::{Datelike, Local, Timelike};
 
-#[cfg(feature = "audio")]
-use tweak_shader::audio::AudioLoader;
-#[cfg(feature = "video")]
-use tweak_shader::video::VideoLoader;
 use tweak_shader::Error;
 use tweak_shader::RenderContext;
 
@@ -45,55 +42,12 @@ mod dummy_video {
     }
 }
 
-#[cfg(not(feature = "video"))]
-use dummy_video::VideoLoader;
-
-#[cfg(not(feature = "audio"))]
-mod dummy_audio {
-    use std::sync::{Arc, Mutex};
-
-    pub struct AudioLoader;
-
-    impl AudioLoader {
-        pub fn new<P: AsRef<std::path::Path>>(
-            _path: P,
-            _fft: bool,
-            _max_samples: Option<u32>,
-        ) -> Result<Self, &'static str> {
-            Err("Compiled without the Audio feature!")
-        }
-        pub fn present(&self) -> Arc<Mutex<Vec<f32>>> {
-            unreachable!()
-        }
-        pub fn samples(&self) -> usize {
-            unreachable!()
-        }
-
-        pub fn play(&self) {
-            unreachable!()
-        }
-
-        pub fn pause(&self) {
-            unreachable!()
-        }
-        pub fn channels(&self) -> u16 {
-            unreachable!()
-        }
-    }
-}
-
-#[cfg(not(feature = "audio"))]
-use dummy_audio::AudioLoader;
-
 #[derive(Debug)]
 enum RunnerError {
     Validation(String),
     MissingFile,
     Shader(Error),
-    #[cfg(feature = "video")]
-    Video(tweak_shader::video::VideoLoaderErr),
-    #[cfg(not(feature = "video"))]
-    Video(&'static str),
+    Video(String),
     Image(String),
 }
 
@@ -150,8 +104,6 @@ pub(crate) struct App {
     temp_isf_ctx: Cell<Option<Result<RenderContext, RunnerError>>>,
     // Videos that are being polled tracked by variable name
     video_streams: BTreeMap<String, VideoLoader>,
-    // Audio that is being polled tracked by variable name
-    audio_streams: BTreeMap<String, AudioLoader>,
     // If true we will recompile on every file modified event that changes the md5.
     // set to true when there has been a file event, set to low when the compiled shader is
     // moved into the temp_isf_ctx
@@ -263,7 +215,6 @@ impl App {
             letter_box,
             messages,
             video_streams: BTreeMap::new(),
-            audio_streams: BTreeMap::new(),
             message_sender,
             _watcher: watcher,
             temp_isf_ctx: Cell::new(None),
@@ -281,14 +232,7 @@ impl App {
         })
     }
 
-    fn update_stream_textures(&mut self) {
-        if self.ui_state.options.paused {
-            self.audio_streams.values_mut().for_each(|f| f.pause());
-            return;
-        } else {
-            self.audio_streams.values_mut().for_each(|f| f.play());
-        }
-
+    fn update_stream_textures(&mut self, wgpu_device: &wgpu::Device, wgpu_queue: &wgpu::Queue) {
         let video_job_vec: Vec<_> = self
             .video_streams
             .iter_mut()
@@ -300,34 +244,16 @@ impl App {
 
         for (buf, name, width, height) in video_job_vec {
             if let Some(buf) = buf {
-                if let Some(video_buffer) = self
-                    .current_shader_mut()
-                    .load_video_stream_raw(name, height, width)
-                {
-                    video_buffer.copy_from_slice(buf.lock().unwrap().as_ref());
-                }
-            }
-        }
-
-        let audio_job_vec: Vec<_> = self
-            .audio_streams
-            .iter_mut()
-            .map(|(name, loader)| {
-                (
-                    loader.present(),
-                    name.clone(),
-                    loader.channels(),
-                    loader.samples(),
-                )
-            })
-            .collect();
-
-        for (buf, name, channels, samples) in audio_job_vec {
-            if let Some(video_buffer) = self
-                .current_shader_mut()
-                .load_audio_stream_raw(name, channels, samples)
-            {
-                video_buffer.copy_from_slice(buf.lock().unwrap().as_ref());
+                self.current_shader_mut().load_texture_immediate(
+                    name,
+                    height,
+                    width,
+                    width * 4,
+                    wgpu_device,
+                    wgpu_queue,
+                    &wgpu::TextureFormat::Rgba8Unorm,
+                    &buf.lock().unwrap(),
+                );
             }
         }
     }
@@ -380,7 +306,7 @@ impl App {
         }
 
         if !self.pipeline_invalid {
-            self.update_stream_textures();
+            self.update_stream_textures(wgpu_device, wgpu_queue);
 
             if let Some([_, _]) = self.ui_state.options.lock_aspect_ratio {
                 let h = self.output_texture.height();
@@ -604,12 +530,12 @@ impl App {
         self.frame_ct += 1;
         let frame_ct = self.frame_ct;
         let time = self.start_time.elapsed().as_secs_f32();
-        let isf_ctx = self.current_shader_mut();
+        let ctx = self.current_shader_mut();
 
-        isf_ctx.update_datetime([year, month, day, seconds_since_midnight]);
-        isf_ctx.update_frame_count(frame_ct);
-        isf_ctx.update_time(time);
-        isf_ctx.update_delta(time_delta.as_secs_f32());
+        ctx.update_datetime([year, month, day, seconds_since_midnight]);
+        ctx.update_frame_count(frame_ct);
+        ctx.update_time(time);
+        ctx.update_delta(time_delta.as_secs_f32());
     }
 
     fn current_shader_mut(&mut self) -> &mut RenderContext {
@@ -657,10 +583,6 @@ impl App {
                 );
             }
             egui_winit::winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                //self.gui_context
-                //    .egui_state
-                //    .set_pixels_per_point(*scale_factor as f32);
-
                 self.gui_context.egui_screen_desc.pixels_per_point = *scale_factor as f32;
             }
             _ => {}
