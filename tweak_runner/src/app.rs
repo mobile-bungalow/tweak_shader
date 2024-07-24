@@ -19,29 +19,6 @@ use std::path::PathBuf;
 
 use egui_wgpu::wgpu;
 
-// Monkey traits are bad but this will work for now
-#[cfg(not(feature = "video"))]
-mod dummy_video {
-    use std::sync::{Arc, Mutex};
-
-    pub struct VideoLoader;
-
-    impl VideoLoader {
-        pub fn init<P: AsRef<std::path::Path>>(_path: P) -> Result<Self, &'static str> {
-            Err("Compiled without the video feature!")
-        }
-        pub fn present(&self) -> Option<Arc<Mutex<Vec<u8>>>> {
-            unreachable!()
-        }
-        pub fn width(&self) -> u32 {
-            unreachable!()
-        }
-        pub fn height(&self) -> u32 {
-            unreachable!()
-        }
-    }
-}
-
 #[derive(Debug)]
 enum RunnerError {
     Validation(String),
