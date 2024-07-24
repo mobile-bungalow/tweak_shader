@@ -18,7 +18,7 @@ layout(location = 0) out vec4 out_color;
 #pragma sampler(name="default_sampler", linear)
 layout(set=0, binding=1) uniform sampler default_sampler;
 
-#pragma input(image, name="input_image", path="./demo.png")
+#pragma input(image, name="input_image")
 layout(set=0, binding=2) uniform texture2D input_image;
 
 void main() {

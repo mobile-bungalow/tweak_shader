@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::input_type::{DiscreteInput, EventCode, InputType, ShaderBool, TextureStatus};
+use crate::input_type::{InputType, ShaderBool, TextureStatus};
 use std::fmt;
 
 #[derive(Debug)]
@@ -132,7 +132,6 @@ pub struct Document {
     pub utility_block_name: Option<String>,
     pub stage: wgpu::naga::ShaderStage,
     pub inputs: BTreeMap<String, crate::input_type::InputType>,
-    pub preloads: BTreeMap<String, String>,
     pub passes: Vec<RenderPass>,
     pub samplers: BTreeMap<String, SamplerDesc>,
 }
@@ -143,7 +142,6 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
         stage: wgpu::naga::ShaderStage::Fragment,
         version: 1.0,
         passes: vec![],
-        preloads: BTreeMap::new(),
         inputs: BTreeMap::new(),
         samplers: BTreeMap::new(),
     };
@@ -228,6 +226,8 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
         }
     }
 
+    desc.passes.sort_by_key(|p| p.index);
+
     let samplers = input
         .lines()
         .filter_map(|line| line.trim().strip_prefix("#pragma sampler"));
@@ -235,7 +235,8 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
     for sampler in samplers {
         let (_, list) = parse_qualifier_list(sampler).map_err(|e| display_err(sampler, e))?;
 
-        let [(QVal::Id(name_literal), Some(QVal::String(name))), rest @ ..] = list.as_slice()
+        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
+            list.as_slice()
         else {
             return Err(Error::InvalidSamplerDescriptor(sampler.into()));
         };
@@ -271,6 +272,7 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
                 }
             }
             _ => {
+                dbg!(list);
                 return Err(Error::InvalidPassDescriptor(sampler.into()));
             }
         }
@@ -317,17 +319,6 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
                 let (name, point) = create_input(rest).map_err(bail)?;
                 desc.inputs.insert(name, InputType::Point(point));
             }
-            "event" => {
-                let (name, _) =
-                    create_input::<EventCode, DiscreteInput<EventCode>>(rest).map_err(bail)?;
-                desc.inputs.insert(
-                    name,
-                    InputType::Event(DiscreteInput {
-                        default: 0,
-                        current: 0,
-                    }),
-                );
-            }
             "bool" => {
                 let (name, booli) = create_input::<ShaderBool, _>(rest).map_err(bail)?;
                 desc.inputs.insert(name, InputType::Bool(booli));
@@ -339,56 +330,12 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
 
                 desc.inputs
                     .insert(name.clone(), InputType::Image(TextureStatus::Uninit));
-
-                let path = seek(rest, "path").transpose()?;
-
-                if let Some(path) = path {
-                    desc.preloads.insert(name, path);
-                }
-            }
-            "audio" => {
-                let name = seek(rest, "name").ok_or(Error::MissingName(input.into()))?;
-
-                let name: String = name.map_err(|e| map_input_err(format!("{e}"), input))?;
-
-                let samples = seek::<u32>(rest, "max_samples").transpose()?;
-
-                desc.inputs.insert(
-                    name.clone(),
-                    InputType::Audio(TextureStatus::Uninit, samples),
-                );
-
-                let path = seek(rest, "path").transpose()?;
-
-                if let Some(path) = path {
-                    desc.preloads.insert(name, path);
-                }
-            }
-            "audiofft" => {
-                let name = seek(rest, "name").ok_or(Error::MissingName(input.into()))?;
-
-                let name: String = name.map_err(|e| map_input_err(format!("{e}"), input))?;
-
-                let samples = seek::<u32>(rest, "max_columns").transpose()?;
-
-                desc.inputs.insert(
-                    name.clone(),
-                    InputType::AudioFft(TextureStatus::Uninit, samples),
-                );
-
-                let path = seek(rest, "path").transpose()?;
-
-                if let Some(path) = path {
-                    desc.preloads.insert(name, path);
-                }
             }
             _ => {
                 Err(Error::UnknownType(input.into()))?;
             }
         }
     }
-
-    desc.passes.sort_by_key(|p| p.index);
 
     Ok(desc)
 }
@@ -478,14 +425,14 @@ impl TryFrom<QVal> for () {
     }
 }
 
-impl TryFrom<QVal> for bool {
+impl TryFrom<QVal> for ShaderBool {
     type Error = Error;
 
     fn try_from(value: QVal) -> Result<Self, Self::Error> {
         if let QVal::Id(id) | QVal::String(id) = value {
             match id.as_str() {
-                "false" => Ok(false),
-                "true" => Ok(true),
+                "false" => Ok(ShaderBool::False),
+                "true" => Ok(ShaderBool::True),
                 _ => Err(Error::UnexpectedType(format!(
                     "expect value `true` or `false` found {id}"
                 ))),

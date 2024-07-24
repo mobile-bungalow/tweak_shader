@@ -15,7 +15,6 @@
 The tweak shader library provides a [wgpu](https://github.com/gfx-rs/wgpu) rendering and bookkeeping context for an interative screen shader format.
 It allows users to create shaders reminiscent of ShaderToy or ISF shaders with custom uniforms that can be tweaked at runtime. This can be used for 
 composable post processing effects, generative art, reactive visuals and animation, it is intended for inclusion in other wgpu based creative software.
-It features video, image, and audio inputs, as well as a small selection of other types, such as colors, floats, ints, 2d points, and more.
 This Library and it's features were modeled after [ISF](https://github.com/mrRay/ISF_Spec)
 
 This has some notable differences from other glsl based screen shader environments. 
@@ -123,15 +122,10 @@ layout(push_constant) uniform CustomInput {
   vec2 offset;
 };
 
-#pragma input(image, name="input_image", path="./demo.png")
+#pragma input(image, name="input_image", )
 layout(set=1, binding=1) uniform sampler default_sampler;
 layout(set=1, binding=2) uniform texture2D input_image;
 
-#pragma input(audiofft, name="audio_tex")
-layout(set=1, binding=3) uniform texture2D audio_tex;
-
-#pragma input(audiofft, name="audio_fft_tex")
-layout(set=1, binding=4) uniform texture2D audio_fft_tex;
 
 ```
 
@@ -150,9 +144,7 @@ types and their fields:
 | event       | int             | name                                    | A *momentary* boolean, represented by an int (0 - false, 1 - true) for Naga related reasons.                                  |
 | Point       | vec2            | name, min, max, default                 | A 2d point.                                                                                                                   |
 | Color       | vec4            | name, default                           | A color input with straight alpha.                                                                                            |
-| Image       | Texture2d       | name, path                              | A free texture slot to load. and an optional path                                                                             |
-| audio       | Texture2d       | name, path, max_samples                 | A free slot to load an audio texture into, generally expected to be as tall as it has channels and as wide as it has samples. |
-| audiofft    | Texture2d       | name, path, max_samples                 | An audio input, except expecting to have an fft run on it prior to load.                                                      |
+| Image       | Texture2d       | name | A free texture slot to load with images or image sequences.                                                                            |
 
 all fields besides *name* are optional, name should refer to the struct field of the global uniform value, or the texture, that maps to the value.
 

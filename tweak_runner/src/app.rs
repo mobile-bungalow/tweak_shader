@@ -113,43 +113,19 @@ impl std::fmt::Display for RunnerError {
 pub enum RunnerMessage {
     MouseDown,
     MouseUp,
-    MouseMove {
-        x: f64,
-        y: f64,
-        w: f64,
-        h: f64,
-    },
+    MouseMove { x: f64, y: f64, w: f64, h: f64 },
     WatchedFileChanged,
     WatchedFileDeleted,
-    UnloadAudio {
-        var: String,
-    },
-    LoadAudio {
-        var: String,
-        path: PathBuf,
-        fft: bool,
-        max_samples: Option<u32>,
-    },
-    UnloadImage {
-        var: String,
-    },
-    LoadImage {
-        var: String,
-        path: PathBuf,
-    },
+    UnloadImage { var: String },
+    LoadImage { var: String, path: PathBuf },
     ValidationError(String),
     RenderFinished,
-    Resized {
-        width: f32,
-        height: f32,
-    },
+    Resized { width: f32, height: f32 },
     ScreenShot(PathBuf),
     AspectChanged,
     ToggleTweakMenu,
     TogglePause,
-    PrintEphemralError {
-        error: String,
-    },
+    PrintEphemralError { error: String },
 }
 
 pub enum AppStatus {
@@ -253,32 +229,6 @@ impl App {
                 err_string: format!("{e}"),
             },
         };
-
-        if let AppStatus::Ok { ref runner } = status {
-            for job in runner.list_set_up_jobs() {
-                match job {
-                    tweak_shader::UserJobs::LoadImageFile { location, var_name } => {
-                        let _ = message_sender.send(RunnerMessage::LoadImage {
-                            var: var_name.clone(),
-                            path: shader_path.parent().unwrap().join(location),
-                        });
-                    }
-                    tweak_shader::UserJobs::LoadAudioFile {
-                        location,
-                        var_name,
-                        fft,
-                        max_samples,
-                    } => {
-                        let _ = message_sender.send(RunnerMessage::LoadAudio {
-                            var: var_name.clone(),
-                            path: shader_path.parent().unwrap().join(location),
-                            fft: *fft,
-                            max_samples: *max_samples,
-                        });
-                    }
-                }
-            }
-        }
 
         let ui_state = UiState::new();
 
@@ -743,31 +693,6 @@ impl App {
             }
             RunnerMessage::UnloadImage { var } => {
                 self.video_streams.remove(&var);
-                self.current_shader_mut().remove_texture(&var);
-            }
-            RunnerMessage::LoadAudio {
-                var,
-                path,
-                fft,
-                max_samples,
-            } => match AudioLoader::new(&path, fft, max_samples) {
-                Ok(loader) => {
-                    self.audio_streams.insert(var.clone(), loader);
-
-                    if let Some(file) = path.file_name() {
-                        self.ui_state
-                            .current_loaded_files
-                            .insert(var, file.to_string_lossy().to_string());
-                    }
-                }
-                Err(e) => {
-                    self.queue_message(RunnerMessage::PrintEphemralError {
-                        error: e.to_string(),
-                    });
-                }
-            },
-            RunnerMessage::UnloadAudio { var } => {
-                self.audio_streams.remove(&var);
                 self.current_shader_mut().remove_texture(&var);
             }
             RunnerMessage::LoadImage { var, path } => {

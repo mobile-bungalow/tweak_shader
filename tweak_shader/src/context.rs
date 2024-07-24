@@ -11,7 +11,7 @@ use naga::{
 
 use std::collections::BTreeMap;
 
-use crate::{Error, UserJobs};
+use crate::Error;
 
 use wgpu::TextureFormat;
 
@@ -23,8 +23,25 @@ pub struct RenderContext {
     pipeline: Pipeline,
     streams: BTreeMap<VarName, StreamInfo>,
     texture_job_queue: BTreeMap<VarName, TextureJob>,
-    user_set_up_jobs: Vec<crate::UserJobs>,
     cpu_view_cache: BufferCache,
+    stage: wgpu::naga::ShaderStage,
+}
+
+pub enum OutputView<'a> {
+    Single(&'a wgpu::TextureView),
+    Slice(&'a [(String, wgpu::TextureView)]),
+}
+
+impl<'a> Into<OutputView<'a>> for &'a wgpu::TextureView {
+    fn into(self) -> OutputView<'a> {
+        OutputView::Single(self)
+    }
+}
+
+impl<'a> Into<OutputView<'a>> for &'a [(String, wgpu::TextureView)] {
+    fn into(self) -> OutputView<'a> {
+        OutputView::Slice(self.as_ref())
+    }
 }
 
 #[derive(Debug)]
@@ -57,34 +74,6 @@ impl RenderContext {
 
         let document =
             crate::parsing::parse_document(source).map_err(Error::DocumentParsingFailed)?;
-
-        let user_set_up_jobs = document
-            .preloads
-            .iter()
-            .filter_map(
-                |(var_name, location)| match document.inputs.get(var_name.as_str()) {
-                    Some(InputType::Audio(_, max_samples)) => Some(UserJobs::LoadAudioFile {
-                        location: std::path::PathBuf::from(location),
-                        var_name: var_name.clone(),
-                        fft: false,
-                        max_samples: *max_samples,
-                    }),
-
-                    Some(InputType::AudioFft(_, max_samples)) => Some(UserJobs::LoadAudioFile {
-                        location: std::path::PathBuf::from(location),
-                        var_name: var_name.clone(),
-                        fft: true,
-                        max_samples: *max_samples,
-                    }),
-
-                    Some(InputType::Image(_)) => Some(UserJobs::LoadImageFile {
-                        location: std::path::PathBuf::from(location),
-                        var_name: var_name.clone(),
-                    }),
-                    _ => None,
-                },
-            )
-            .collect();
 
         let stripped_src: String = source
             .lines()
@@ -246,20 +235,18 @@ impl RenderContext {
 
         Ok(RenderContext {
             uniforms,
-            user_set_up_jobs,
             pipeline,
             passes: pass_structure,
             cpu_view_cache: BufferCache::new(&format, 1, 1, None, device),
             texture_job_queue: BTreeMap::new(),
             streams: BTreeMap::new(),
+            stage: document.stage,
         })
     }
 
-    /// Returns a slice of jobs the user should complete.
-    /// see [UserJobs] for more information. handling these jobs is totally
-    /// optional.
-    pub fn list_set_up_jobs(&self) -> &[UserJobs] {
-        &self.user_set_up_jobs
+    /// Returns true if the loaded shader is a compute shader.
+    pub fn is_compute(&self) -> bool {
+        self.stage == ShaderStage::Compute
     }
 
     /// Renders the shader maintained by this context to the provided texture view.
@@ -280,15 +267,25 @@ impl RenderContext {
 
     /// Encodes the renderpasses and buffer copies in the correct order into
     /// `command` encoder targeting `view`.
-    pub fn encode_render(
+    pub fn encode_render<'a, V>(
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        view: V,
         width: u32,
         height: u32,
-    ) {
+    ) where
+        V: Into<OutputView<'a>>,
+    {
+        let output_view: OutputView<'_> = view.into();
+
+        let view = match output_view {
+            OutputView::Single(v) => v,
+            OutputView::Slice(&[]) => return,
+            OutputView::Slice(_) => todo!(),
+        };
+
         // resize render targets and copy over texture contents for consistency
         self.update_pass_textures(command_encoder, device, width, height);
         // updates video, audio, streams, shows new images.

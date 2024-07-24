@@ -210,17 +210,13 @@ fn input_widget(
             ui.add(Slider::new(&mut v.current, v.min..=v.max).text(name));
             ui.add_space(10.0);
         }
-        InputVariant::Event => {
-            let trigger = val.as_event().unwrap();
-            trigger.current = if ui.button(name).clicked() { 1 } else { 0 };
-        }
         InputVariant::Bool => {
             let v = val.as_bool().unwrap();
-            if ui.radio(v.current > 0, name).clicked() {
-                if v.current > 0 {
-                    v.current = 0;
+            if ui.radio(v.current.is_true(), name).clicked() {
+                if v.current.is_true() {
+                    v.current = tweak_shader::input_type::ShaderBool::False;
                 } else {
-                    v.current = 1;
+                    v.current = tweak_shader::input_type::ShaderBool::True;
                 }
             }
         }
@@ -287,11 +283,6 @@ fn file_selector(
                             var: name.to_owned(),
                         });
                     }
-                    InputVariant::Audio | InputVariant::AudioFft => {
-                        let _ = sender.send(RunnerMessage::UnloadAudio {
-                            var: name.to_owned(),
-                        });
-                    }
                     _ => {}
                 }
                 ui_state.current_loaded_files.remove(name);
@@ -300,14 +291,6 @@ fn file_selector(
             match val.variant() {
                 InputVariant::Image => {
                     launch_image_or_video_dialog(sender, name.to_owned());
-                }
-                InputVariant::Audio => {
-                    let samples = val.audio_samples();
-                    launch_audio_dialog(sender.clone(), name.to_owned(), samples, false);
-                }
-                InputVariant::AudioFft => {
-                    let samples = val.audio_samples();
-                    launch_audio_dialog(sender.clone(), name.to_owned(), samples, true);
                 }
                 _ => {}
             }
@@ -389,26 +372,6 @@ fn launch_screenshot_dialog(sender: std::sync::mpsc::Sender<RunnerMessage>) {
                 buf.set_extension("png");
             }
             let _ = sender.send(RunnerMessage::ScreenShot(buf));
-        }
-    });
-}
-
-fn launch_audio_dialog(
-    sender: std::sync::mpsc::Sender<RunnerMessage>,
-    var: String,
-    max_samples: Option<u32>,
-    fft: bool,
-) {
-    std::thread::spawn(move || {
-        let file_path = tinyfiledialogs::open_file_dialog("Load an audio source", "/", None);
-
-        if let Some(path) = file_path {
-            let _ = sender.send(RunnerMessage::LoadAudio {
-                fft,
-                max_samples,
-                path: path.into(),
-                var,
-            });
         }
     });
 }

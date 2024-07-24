@@ -125,11 +125,6 @@ pub(crate) mod uniforms;
 /// This module provides typesafe wrapper for internal uniform buffer data.
 pub mod input_type;
 
-/// Requires the `audio` feautre. provides an audio loader type
-/// streaming audio in a loop from files and running an fft.
-#[cfg(feature = "audio")]
-pub mod audio;
-
 /// Requires the `video` feature, provides a convenient type
 /// for loading and buffering video. note that this is fairly memory
 /// intensive.
@@ -141,33 +136,6 @@ pub use wgpu;
 pub use context::RenderContext;
 
 pub(crate) type VarName = String;
-
-/// Video and Audio loading Tasks for the user to complete, as specified
-/// by the tweak shader pragmas. you can retrieve a list of these from the context with
-/// [`crate::RenderContext::list_set_up_jobs`]. see [`RenderContext::load_video_stream_raw`], [`RenderContext::load_video_stream_raw`],
-/// [`RenderContext::load_texture`], and [`RenderContext::load_shared_texture`] for interfaces
-/// to complete these requests.
-#[derive(Debug)]
-pub enum UserJobs {
-    /// The Context has meta data that indicates the file at `location`
-    /// should be loaded into the texture var_name. It could be a video or image file.
-    LoadImageFile {
-        location: std::path::PathBuf,
-        var_name: String,
-    },
-    /// The context wants you to load an audio file at location a`location` and
-    /// to process it into a frame width of at most `max_samples` . if fft is
-    /// true, process run it through an FFT with at most `max_samples` buckets.
-    LoadAudioFile {
-        location: std::path::PathBuf,
-        var_name: String,
-        // whether or not the shader expects the uploaded texture to have an fft run
-        // on the samples.
-        fft: bool,
-        // an optional cap for the number of samples
-        max_samples: Option<u32>,
-    },
-}
 
 /// joint error type
 #[derive(Debug)]

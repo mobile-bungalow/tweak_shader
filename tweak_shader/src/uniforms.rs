@@ -288,6 +288,8 @@ impl Uniforms {
         })
     }
 
+    //pub fn target_descriptions(&self) -> impl Iterator<Item = Target> {}
+
     // Copy this uniforms data into other - goes by name
     pub fn copy_into(&mut self, other: &mut Self, device: &wgpu::Device, queue: &wgpu::Queue) {
         // Copy Uniforms
@@ -1358,9 +1360,7 @@ impl TweakBindGroup {
                 *tex = None;
                 *view = None;
                 let status = match input {
-                    InputType::Image(status)
-                    | InputType::Audio(status, _)
-                    | InputType::AudioFft(status, _) => status,
+                    InputType::Image(status) => status,
                     _ => {
                         return false;
                     }
@@ -1382,9 +1382,7 @@ impl TweakBindGroup {
         match self.binding_entries.get_mut(addr.binding) {
             Some(BindingEntry::Texture { view, input, .. }) => {
                 let status = match input {
-                    InputType::Image(status)
-                    | InputType::Audio(status, _)
-                    | InputType::AudioFft(status, _) => status,
+                    InputType::Image(status) => status,
                     _ => {
                         return false;
                     }
@@ -1410,9 +1408,7 @@ impl TweakBindGroup {
                 *view = Some(new_view);
                 *tex = Some(new_tex);
                 let status = match input {
-                    InputType::Image(status)
-                    | InputType::Audio(status, _)
-                    | InputType::AudioFft(status, _) => status,
+                    InputType::Image(status) => status,
                     _ => {
                         return false;
                     }

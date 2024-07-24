@@ -8,7 +8,18 @@ pub type Color = [f32; 4];
 
 /// glsl 450 does not support booleans in uniforms
 /// well, so this is our friendly type alias.
-pub type ShaderBool = u32;
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, NoUninit)]
+pub enum ShaderBool {
+    False = 0,
+    True,
+}
+
+impl ShaderBool {
+    pub fn is_true(&self) -> bool {
+        matches!(self, ShaderBool::True)
+    }
+}
 
 /// User defined event codes, reset to 0 at the start of the next render.
 pub type EventCode = u32;
@@ -57,16 +68,7 @@ impl<'a> MutInput<'a> {
     /// texture status
     pub fn texture_status(&mut self) -> Option<TextureStatus> {
         match self.inner {
-            InputType::Image(s) | InputType::Audio(s, _) | InputType::AudioFft(s, _) => Some(*s),
-            _ => None,
-        }
-    }
-
-    /// Get the number of maximum samples or buckets that the input
-    /// asks for if it is audio or audiofft
-    pub fn audio_samples(&mut self) -> Option<u32> {
-        match self.inner {
-            InputType::Audio(_, s) | InputType::AudioFft(_, s) => *s,
+            InputType::Image(s) => Some(*s),
             _ => None,
         }
     }
@@ -103,7 +105,7 @@ impl<'a> MutInput<'a> {
 
     /// Returns a reference to the internal bool if the input is bool
     /// and none otherwise
-    pub fn as_bool(&mut self) -> Option<&mut DiscreteInput<u32>> {
+    pub fn as_bool(&mut self) -> Option<&mut DiscreteInput<ShaderBool>> {
         if let InputType::Bool(unbound_input) = self.inner {
             Some(unbound_input)
         } else {
@@ -126,16 +128,6 @@ impl<'a> MutInput<'a> {
     /// such as matrices or arrays.
     pub fn as_unknown_bytes(&mut self) -> &mut [u8] {
         self.inner.as_bytes_mut()
-    }
-
-    /// Returns a reference to the internal event if the variant is an event
-    /// and none otherwise, events are 0 if high, 1 if not.
-    pub fn as_event(&mut self) -> Option<&mut DiscreteInput<u32>> {
-        if let InputType::Event(value) = self.inner {
-            Some(value)
-        } else {
-            None
-        }
     }
 
     /// Copies `self` `other` other if `self`s current value respects
@@ -185,13 +177,10 @@ impl<'a> MutInput<'a> {
                 o.current = s.current;
                 true
             }
-            (InputType::Image(s), InputType::Image(o))
-            | (InputType::Audio(s, _), InputType::Audio(o, _))
-            | (InputType::AudioFft(s, _), InputType::AudioFft(o, _)) => {
+            (InputType::Image(s), InputType::Image(o)) => {
                 *o = *s;
                 true
             }
-            (InputType::Event(_), InputType::Event(_)) => true,
             _ => false,
         }
     }
@@ -293,9 +282,13 @@ impl FromRanges<[f32; 2]> for BoundedInput<[f32; 2]> {
     }
 }
 
-impl FromRanges<bool> for DiscreteInput<ShaderBool> {
-    fn from_ranges(_min: Option<bool>, _max: Option<bool>, default: Option<bool>) -> Self {
-        let default_bool = if default.is_some_and(|b| b) { 1 } else { 0 };
+impl FromRanges<ShaderBool> for DiscreteInput<ShaderBool> {
+    fn from_ranges(
+        _min: Option<ShaderBool>,
+        _max: Option<ShaderBool>,
+        default: Option<ShaderBool>,
+    ) -> Self {
+        let default_bool = default.unwrap_or(ShaderBool::False);
 
         Self {
             current: default_bool,
@@ -354,23 +347,6 @@ pub enum InputType {
     /// #pragma input(image, name="quux",  default=[0.0, 0.0, 0.0, 1.0])
     /// ```
     Image(TextureStatus),
-    /// A status handle indicating the state of an internally maintained texture
-    /// and an optional maximum number of samplers.
-    ///```text
-    /// #pragma input(audio, name="garply", path="./demo.mp4")
-    ///````
-    Audio(TextureStatus, Option<u32>),
-    /// A status handle indicating the state of an internally maintained texture
-    /// and an optional maximum number of fft buckets.
-    ///```text
-    /// #pragma input(audiofft, name="waldo")
-    ///````
-    AudioFft(TextureStatus, Option<u32>),
-    /// An int uniform, implying a momentary bool.
-    /// ```text
-    /// #pragma input(event, name="Swampus")
-    /// ```
-    Event(DiscreteInput<EventCode>),
     /// The default type of any uniform with no pragma specifying how to interpret it.
     RawBytes(RawBytes),
 }
@@ -431,10 +407,7 @@ impl TryAsMut<Color> for InputType {
 
 impl InputType {
     pub fn is_stored_as_texture(&self) -> bool {
-        matches!(
-            self,
-            Self::Audio(_, _) | Self::Image(_) | Self::AudioFft(_, _)
-        )
+        matches!(self, Self::Image(_))
     }
 
     pub fn as_mut<T>(&mut self) -> Option<&mut T>
@@ -448,7 +421,7 @@ impl InputType {
     /// will always return some if `is_stored_as_texture` returns true.
     pub fn texture_status(&self) -> Option<&TextureStatus> {
         match self {
-            Self::Audio(s, _) | Self::Image(s) | Self::AudioFft(s, _) => Some(s),
+            Self::Image(s) => Some(s),
             _ => None,
         }
     }
@@ -474,7 +447,6 @@ impl InputType {
             Self::Int(v, _) => bytes_of(&v.current),
             Self::Point(v) => bytes_of(&v.current),
             Self::Bool(v) => bytes_of(&v.current),
-            Self::Event(ev) => bytes_of(&ev.current),
             Self::Color(v) => bytes_of(&v.current),
             Self::RawBytes(v) => v.inner.as_slice(),
             _ => &[],
@@ -507,7 +479,7 @@ impl InputType {
                         size: naga::VectorSize::Bi,
                     }
             }
-            InputType::Bool(_) | InputType::Event(_) => {
+            InputType::Bool(_) => {
                 *refl
                     == TypeInner::Scalar(naga::Scalar {
                         kind: ScalarKind::Sint,
@@ -524,10 +496,7 @@ impl InputType {
                         size: naga::VectorSize::Quad,
                     }
             }
-            InputType::Image(_)
-            | InputType::Audio(_, _)
-            | InputType::AudioFft(_, _)
-            | InputType::RawBytes(_) => unreachable!(),
+            InputType::Image(_) | InputType::RawBytes(_) => unreachable!(),
         }
     }
 }
@@ -547,9 +516,6 @@ impl std::fmt::Display for InputType {
             InputType::Bool(_) => "Bool",
             InputType::Color(_) => "Color",
             InputType::Image(_) => "Image",
-            InputType::Audio(_, _) => "Audio",
-            InputType::AudioFft(_, _) => "AudioFft",
-            InputType::Event(_) => "Event",
             InputType::RawBytes(_) => "Raw Bytes",
         };
         write!(f, "{s}")
@@ -581,9 +547,6 @@ impl From<&InputType> for InputVariant {
             InputType::Bool(_) => InputVariant::Bool,
             InputType::Color(_) => InputVariant::Color,
             InputType::Image(_) => InputVariant::Image,
-            InputType::Audio(_, _) => InputVariant::Audio,
-            InputType::AudioFft(_, _) => InputVariant::AudioFft,
-            InputType::Event(_) => InputVariant::Event,
             InputType::RawBytes(_) => InputVariant::Bytes,
         }
     }

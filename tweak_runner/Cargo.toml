@@ -7,7 +7,6 @@ license = "MIT"
 
 [features]
 default = []
-audio = ["tweak_shader/audio"]
 video = ["tweak_shader/video"]
 
 [dependencies]
