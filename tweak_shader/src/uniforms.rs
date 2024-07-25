@@ -268,6 +268,35 @@ impl Uniforms {
             }
         }
 
+        let mut targets = vec![];
+        for target in document.targets.iter() {
+            let fmt = sets
+                .iter()
+                .map(|e| e.binding_entries.iter())
+                .flatten()
+                .find_map(|bg_entry| match bg_entry {
+                    BindingEntry::Texture {
+                        tex: Some(tex),
+                        name,
+                        ..
+                    } => {
+                        if name == &target.name {
+                            Some(tex.format())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                });
+
+            if let Some(format) = fmt {
+                targets.push(Target {
+                    doc_desc: target.clone(),
+                    format,
+                })
+            }
+        }
+
         let contents = (0..pass_count as u32).collect::<Vec<u32>>();
 
         // During the render pass we need to queue `copy_buffer_to_buffer`
@@ -280,7 +309,7 @@ impl Uniforms {
         });
 
         Ok(Self {
-            targets: vec![],
+            targets,
             pass_indices,
             push_constants,
             private_textures,
