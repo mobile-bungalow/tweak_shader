@@ -707,6 +707,7 @@ fn inputs_iter() {
     let refs = inputs_test.iter_inputs_mut().collect::<Vec<_>>();
 
     for name in names {
+        dbg!(name);
         assert!(refs.iter().any(|(s, _)| name == *s))
     }
 
@@ -758,7 +759,7 @@ void main()
 #[test]
 fn unmapped_bindings() {
     let (device, queue) = set_up_wgpu();
-    // this will panic if the pipeline can't be set up.
+
     let mut unmapped = RenderContext::new(
         NO_EXCESS,
         wgpu::TextureFormat::Rgba8UnormSrgb,

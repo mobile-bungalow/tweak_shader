@@ -8,8 +8,6 @@ use naga::{
     ShaderStage,
 };
 
-use std::collections::BTreeMap;
-
 use crate::Error;
 
 use wgpu::TextureFormat;
@@ -302,12 +300,12 @@ impl RenderContext {
 
     fn encode_compute_render(
         &mut self,
-        queue: &wgpu::Queue,
-        device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        width: u32,
-        height: u32,
+        _view: &wgpu::TextureView,
+        _width: u32,
+        _height: u32,
     ) {
         {
             let Pipeline::Compute {
@@ -477,7 +475,7 @@ impl RenderContext {
     /// the inputs provided by the user, as well as
     /// the raw bytes of all the uniforms maintained by the [RenderContext]
     /// that do not have input pragmas.
-    pub fn iter_inputs_mut(&mut self) -> impl Iterator<Item = (&str, MutInput)> {
+    pub fn iter_inputs_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
         self.uniforms.iter_custom_uniforms_mut()
     }
 
@@ -485,7 +483,7 @@ impl RenderContext {
     /// the inputs provided by the user, as well as
     /// the raw bytes of all the uniforms maintained by the [RenderContext]
     /// that do not have input pragmas.
-    pub fn iter_inputs(&self) -> impl Iterator<Item = (&str, &InputType)> {
+    pub fn iter_inputs(&self) -> impl Iterator<Item = (&String, &InputType)> {
         self.uniforms.iter_custom_uniforms()
     }
 

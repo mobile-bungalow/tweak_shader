@@ -85,7 +85,7 @@ impl fmt::Display for Error {
             }
 
             Error::InvalidTarget(pragma) => {
-                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <screen>, dimensions=[width, height]), found #pragma target{pragma}")
+                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <screen>, height=n, width=n), found #pragma target{pragma}")
             }
             Error::MultipleScreenTargets => {
                 write!(f, "Multiple screen targets defined, only one target directive can use the screen keyword at a time.")
@@ -247,6 +247,8 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
             }
         }
     }
+
+    desc.passes.sort_by_key(|pass| pass.index);
 
     let targets = input
         .lines()
@@ -872,16 +874,19 @@ mod tests {
         let pragma = "#pragma stage(name=josh)";
         assert!(parse_document(pragma).is_err());
 
+        let pragma = "#pragma pass(1, height=1)";
+        parse_document(pragma).unwrap();
+
+        let pragma = "#pragma stage(fragment)";
+        parse_document(pragma).unwrap();
+
         let pragma = "#pragma stage(compute)";
         parse_document(pragma).unwrap();
 
-        let pragma = "#pragma target(name='done_2', screen, dimensions=[100,100])";
+        let pragma = "#pragma target(name=done_2, screen, height=100, width=100)";
         parse_document(pragma).unwrap();
 
         let pragma = "#pragma sampler(name=josh, fake)";
-        assert!(parse_document(pragma).is_err());
-
-        let pragma = "#pragma target(name=josh, fake)";
         assert!(parse_document(pragma).is_err());
 
         let pragma = "#pragma input(float, name=\"test\")";

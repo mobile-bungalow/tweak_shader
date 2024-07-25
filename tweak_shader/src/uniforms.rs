@@ -1,11 +1,12 @@
-use crate::input_type::*;
 use crate::parsing::Document;
+use crate::{input_type::*, parsing};
 use __core::num::NonZeroU32;
 use bytemuck::{checked::cast_slice, offset_of};
 use naga::{AddressSpace, ResourceBinding, StorageAccess, StructMember};
+use wgpu::naga::{FastHashSet, FastIndexMap};
 use wgpu::{naga, TextureFormat};
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use bytemuck::*;
 use wgpu::{util::DeviceExt, BufferUsages};
@@ -125,16 +126,22 @@ struct VariableAddress {
     pub set: usize,
     // actually just index into bind group list
     pub binding: usize,
-    pub field: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct Target {
+    doc_desc: parsing::Target,
+    format: wgpu::TextureFormat,
 }
 
 #[derive(Debug)]
 pub struct Uniforms {
     lookup_table: BTreeMap<VarName, VariableAddress>,
-    private_textures: HashSet<VarName>,
+    private_textures: FastHashSet<VarName>,
     utility_block_addr: Option<VariableAddress>,
     push_constants: Option<PushConstant>,
     sets: Vec<TweakBindGroup>,
+    targets: Vec<Target>,
     utility_block_data: GlobalData,
     place_holder_texture: wgpu::Texture,
     pass_indices: wgpu::Buffer,
@@ -165,7 +172,6 @@ impl Uniforms {
                     push_addr = Some(VariableAddress {
                         set: set_idx,
                         binding: binding_idx,
-                        field: None,
                     })
                 }
                 match binding {
@@ -173,17 +179,15 @@ impl Uniforms {
                         utility_block_addr = Some(VariableAddress {
                             set: set_idx,
                             binding: binding_idx,
-                            field: None,
                         });
                     }
                     BindingEntry::UniformBlock { inputs, .. } => {
-                        for (field_idx, field) in inputs.iter().enumerate() {
+                        for (name, _) in inputs.iter() {
                             lookup_table.insert(
-                                field.0.clone(),
+                                name.clone(),
                                 VariableAddress {
                                     set: set_idx,
                                     binding: binding_idx,
-                                    field: Some(field_idx),
                                 },
                             );
                         }
@@ -194,7 +198,6 @@ impl Uniforms {
                             VariableAddress {
                                 set: set_idx,
                                 binding: binding_idx,
-                                field: None,
                             },
                         );
                     }
@@ -208,15 +211,16 @@ impl Uniforms {
             .keys()
             .filter(|key| {
                 let not_in_push_constants =
-                    if let Some(PushConstant::Struct { input_map, .. }) = &push_constants {
-                        !input_map.contains_key(*key)
+                    if let Some(PushConstant::Struct { inputs, .. }) = &push_constants {
+                        !inputs.contains_key(*key)
                     } else {
                         true
                     };
+
                 let not_in_uni = sets.iter().all(|binding| {
                     lookup_table
                         .get(*key)
-                        .map(|addr| binding.get(addr))
+                        .map(|addr| binding.get(key, addr))
                         .is_none()
                 });
                 not_in_push_constants && not_in_uni
@@ -251,7 +255,7 @@ impl Uniforms {
         let mut utility_block_data: GlobalData = bytemuck::Zeroable::zeroed();
         utility_block_data.mouse = [0.0, 0.0, -0.0, -0.0];
 
-        let mut private_textures: HashSet<_> = document
+        let mut private_textures: FastHashSet<_> = document
             .passes
             .iter()
             .filter_map(|pass| pass.target_texture.clone())
@@ -276,6 +280,7 @@ impl Uniforms {
         });
 
         Ok(Self {
+            targets: vec![],
             pass_indices,
             push_constants,
             private_textures,
@@ -288,20 +293,21 @@ impl Uniforms {
         })
     }
 
-    //pub fn target_descriptions(&self) -> impl Iterator<Item = Target> {}
-
     // Copy this uniforms data into other - goes by name
     pub fn copy_into(&mut self, other: &mut Self, device: &wgpu::Device, queue: &wgpu::Queue) {
         // Copy Uniforms
         other.utility_block_data = self.utility_block_data;
 
-        for addr in other.lookup_table.values() {
-            let Some(other_value) = other.sets.get_mut(addr.set).and_then(|s| s.get_mut(addr))
+        for (name, addr) in other.lookup_table.iter() {
+            let Some(other_value) = other
+                .sets
+                .get_mut(addr.set)
+                .and_then(|s| s.get_mut(name, addr))
             else {
                 continue;
             };
 
-            let Some(self_value) = self.query_addr_mut(addr) else {
+            let Some(self_value) = self.query_addr_mut(name, addr) else {
                 continue;
             };
 
@@ -314,8 +320,10 @@ impl Uniforms {
         let mut command_encoder = device.create_command_encoder(&Default::default());
 
         for (name, addr) in self.lookup_table.iter() {
-            let Some(mut self_image_input) =
-                self.sets.get_mut(addr.set).and_then(|s| s.get_mut(addr))
+            let Some(mut self_image_input) = self
+                .sets
+                .get_mut(addr.set)
+                .and_then(|s| s.get_mut(name, addr))
             else {
                 continue;
             };
@@ -324,7 +332,8 @@ impl Uniforms {
                 continue;
             };
 
-            let Some(mut other_image_input) = other.query_addr_mut(&other_addr.clone()) else {
+            let Some(mut other_image_input) = other.query_addr_mut(name, &other_addr.clone())
+            else {
                 continue;
             };
 
@@ -451,7 +460,7 @@ impl Uniforms {
 
     pub fn load_texture(
         &mut self,
-        variable_name: &str,
+        var_name: &str,
         data: &[u8],
         height: u32,
         width: u32,
@@ -460,9 +469,9 @@ impl Uniforms {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let addr = self.lookup_table.get(variable_name).copied();
+        let addr = self.lookup_table.get(var_name).copied();
         let input_type = addr
-            .and_then(|addr| self.query_addr_mut(&addr))
+            .and_then(|addr| self.query_addr_mut(var_name, &addr))
             .and_then(|mut t| t.texture_status());
 
         let status = match input_type {
@@ -472,7 +481,7 @@ impl Uniforms {
             }
         };
 
-        let wgpu_texture = self.get_texture(variable_name);
+        let wgpu_texture = self.get_texture(var_name);
 
         // If a texture of identical dimension
         // exists: write to it. otherwise init a new texture with the data.
@@ -532,7 +541,7 @@ impl Uniforms {
                     },
                 );
 
-                self.set_texture(variable_name, tex);
+                self.set_texture(var_name, tex);
             }
         }
     }
@@ -634,12 +643,7 @@ impl Uniforms {
 
     pub fn get_input_mut(&mut self, name: &str) -> Option<MutInput> {
         let out = self.push_constants.as_mut().and_then(|p| match p {
-            PushConstant::Struct {
-                inputs, input_map, ..
-            } => input_map
-                .get(name)
-                .and_then(|i| inputs.get_mut(*i))
-                .map(|(_, i)| MutInput::from(i)),
+            PushConstant::Struct { inputs, .. } => inputs.get_mut(name).map(|i| i.into()),
             _ => None,
         });
         if out.is_some() {
@@ -647,136 +651,94 @@ impl Uniforms {
         } else {
             let addr = self.lookup_table.get(name)?;
             let set = self.sets.get_mut(addr.set)?;
-            set.get_mut(addr)
+            set.get_mut(name, addr)
         }
     }
 
     pub fn get_input(&self, name: &str) -> Option<&InputType> {
         let out = self.push_constants.as_ref().and_then(|p| match p {
-            PushConstant::Struct {
-                inputs, input_map, ..
-            } => input_map.get(name).and_then(|i| inputs.get(*i)),
+            PushConstant::Struct { inputs, .. } => inputs.get(name),
             _ => None,
         });
+
         if out.is_some() {
-            out.map(|(_, s)| s)
+            out
         } else {
             let addr = self.lookup_table.get(name)?;
             let set = self.sets.get(addr.set)?;
-            set.get(addr)
+            set.get(name, addr)
         }
     }
 
-    fn query_addr_mut(&mut self, addr: &VariableAddress) -> Option<MutInput> {
+    fn query_addr_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
         let set = self.sets.get_mut(addr.set)?;
-        set.get_mut(addr)
+        set.get_mut(name, addr)
     }
 
-    pub fn iter_custom_uniforms_mut(&mut self) -> impl Iterator<Item = (&str, MutInput)> {
-        let mut push =
-            if let Some(PushConstant::Struct { inputs, .. }) = self.push_constants.as_mut() {
-                Some(
-                    inputs
-                        .iter_mut()
-                        .map(|(k, v)| (k.as_str(), MutInput::from(v))),
-                )
-            } else {
-                None
-            };
+    pub fn iter_custom_uniforms_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
+        let push = if let Some(PushConstant::Struct { inputs, .. }) = self.push_constants.as_mut() {
+            Some(Box::new(inputs.iter_mut().map(|(k, v)| (k, v.into())))
+                as Box<dyn Iterator<Item = _>>)
+        } else {
+            None
+        };
 
-        let mut field_iter = None;
-
-        let mut set_iter = self
-            .sets
+        self.sets
             .iter_mut()
-            .flat_map(|b| b.binding_entries.iter_mut());
-
-        let private_textures = &self.private_textures;
-
-        std::iter::from_fn(move || {
-            if let Some(push_constant) = push.as_mut().and_then(|iter| iter.next()) {
-                return Some(push_constant);
-            }
-            loop {
-                while field_iter.is_none() {
-                    field_iter = match set_iter.next()? {
-                        BindingEntry::UniformBlock { inputs, .. } => Some(
-                            inputs
-                                .iter_mut()
-                                .filter(|(_, ty)| !matches!(ty, InputType::RawBytes(_))),
-                        ),
-                        BindingEntry::Texture { input, name, .. } => {
-                            if private_textures.contains(name) {
-                                None
-                            } else {
-                                return Some((name.as_str(), input.into()));
-                            }
+            .flat_map(|b| b.binding_entries.iter_mut())
+            .filter_map(|entry| match entry {
+                BindingEntry::UniformBlock { inputs, .. } => {
+                    let iter = inputs.iter_mut().filter_map(|(k, v)| {
+                        if !matches!(v, InputType::RawBytes(_)) && self.lookup_table.contains_key(k)
+                        {
+                            Some((k, v.into()))
+                        } else {
+                            None
                         }
-                        _ => None,
-                    };
+                    });
+                    Some(Box::new(iter) as _)
                 }
-
-                if let Some(field_iter_next) = field_iter.as_mut() {
-                    let next = field_iter_next
-                        .next()
-                        .map(|(name, binding)| (name.as_str(), binding.into()));
-                    if let Some(next) = next {
-                        return Some(next);
+                BindingEntry::Texture { input, name, .. } => {
+                    if self.private_textures.contains(name) {
+                        None
                     } else {
-                        field_iter = None;
+                        Some(Box::new(std::iter::once_with(move || (&*name, input.into()))) as _)
                     }
                 }
-            }
-        })
+                _ => None,
+            })
+            .chain(push)
+            .flatten()
     }
 
-    pub fn iter_custom_uniforms(&self) -> impl Iterator<Item = (&str, &InputType)> {
-        let mut push =
-            if let Some(PushConstant::Struct { inputs, .. }) = self.push_constants.as_ref() {
-                Some(inputs.iter().map(|(k, v)| (k.as_str(), v)))
-            } else {
-                None
-            };
+    pub fn iter_custom_uniforms(&self) -> impl Iterator<Item = (&String, &InputType)> {
+        let push = if let Some(PushConstant::Struct { inputs, .. }) = self.push_constants.as_ref() {
+            Some(Box::new(inputs.iter()) as Box<dyn Iterator<Item = _>>)
+        } else {
+            None
+        };
 
-        let mut field_iter = None;
-        let mut iter = self.sets.iter().flat_map(|b| b.binding_entries.iter());
-        let set_ref = &self.private_textures;
-
-        std::iter::from_fn(move || {
-            if let Some(push_constant) = push.as_mut().and_then(|iter| iter.next()) {
-                return Some(push_constant);
-            }
-            loop {
-                while field_iter.is_none() {
-                    field_iter = match iter.next()? {
-                        BindingEntry::UniformBlock { inputs, .. } => Some(
-                            inputs
-                                .iter()
-                                .filter(|(_, ty)| !matches!(ty, InputType::RawBytes(_))),
-                        ),
-                        BindingEntry::Texture { input, name, .. } => {
-                            if set_ref.contains(name) {
-                                None
-                            } else {
-                                return Some((name.as_str(), input));
-                            }
-                        }
-                        _ => None,
-                    };
+        self.sets
+            .iter()
+            .flat_map(|b| b.binding_entries.iter())
+            .filter_map(|entry| match entry {
+                BindingEntry::UniformBlock { inputs, .. } => {
+                    let iter = inputs.iter().filter(|(k, v)| {
+                        !matches!(v, InputType::RawBytes(_)) && self.lookup_table.contains_key(*k)
+                    });
+                    Some(Box::new(iter) as _)
                 }
-
-                if let Some(field_iter_next) = field_iter.as_mut() {
-                    let next = field_iter_next
-                        .next()
-                        .map(|(name, binding)| (name.as_str(), binding));
-                    if let Some(next) = next {
-                        return Some(next);
+                BindingEntry::Texture { input, name, .. } => {
+                    if self.private_textures.contains(name) {
+                        None
                     } else {
-                        field_iter = None;
+                        Some(Box::new(std::iter::once_with(move || (name, input))) as _)
                     }
                 }
-            }
-        })
+                _ => None,
+            })
+            .chain(push)
+            .flatten()
     }
 
     pub fn iter_sets(&self) -> impl Iterator<Item = (u32, &wgpu::BindGroup)> {
@@ -879,7 +841,7 @@ pub enum BindingEntry {
         // the binding index , might not be contiguous
         binding: u32,
         // inputs with a non `raw_bytes` type if they are mapped in the document
-        inputs: Vec<(String, InputType)>,
+        inputs: FastIndexMap<String, InputType>,
         // buffer this uniform is mapped to
         buffer: wgpu::Buffer,
         // the largest struct size in the inputs
@@ -968,7 +930,7 @@ impl BindingEntry {
             }
         }
 
-        let mut inputs = vec![];
+        let mut inputs = FastIndexMap::default();
 
         for member in members {
             let name = member.name.clone().unwrap_or_default();
@@ -979,7 +941,7 @@ impl BindingEntry {
 
             if let Some(var) = document.inputs.get(&name) {
                 if var.type_check_struct_member(&ty.inner) {
-                    inputs.push((name, var.clone()));
+                    inputs.insert(name, var.clone());
                 } else {
                     Err(Error::TypeCheck(name.clone()))?
                 }
@@ -987,7 +949,7 @@ impl BindingEntry {
                 let input = InputType::RawBytes(crate::input_type::RawBytes {
                     inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
                 });
-                inputs.push((name, input));
+                inputs.insert(name, input);
             }
         }
 
@@ -1038,9 +1000,7 @@ pub enum PushConstant {
     },
     Struct {
         backing: Vec<u8>,
-        // inputs with a non `raw_bytes` type if they are mapped in the document
-        input_map: BTreeMap<String, usize>,
-        inputs: Vec<(String, InputType)>,
+        inputs: FastIndexMap<String, InputType>,
         align: usize,
     },
 }
@@ -1089,8 +1049,7 @@ pub fn push_constant(
                 Err(Error::UtilityBlockType)?
             }
         } else {
-            let mut input_map = BTreeMap::new();
-            let mut inputs = Vec::new();
+            let mut inputs: FastIndexMap<String, InputType> = Default::default();
 
             for member in members {
                 let name = member.name.clone().unwrap_or_default();
@@ -1101,8 +1060,7 @@ pub fn push_constant(
 
                 if let Some(var) = document.inputs.get(&name) {
                     if var.type_check_struct_member(&ty.inner) {
-                        input_map.insert(name.clone(), inputs.len());
-                        inputs.push((name, var.clone()));
+                        inputs.insert(name, var.clone());
                     } else {
                         Err(Error::TypeCheck(name.clone()))?
                     }
@@ -1110,8 +1068,7 @@ pub fn push_constant(
                     let input = InputType::RawBytes(crate::input_type::RawBytes {
                         inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
                     });
-                    inputs.push((name.clone(), input.clone()));
-                    input_map.insert(name.clone(), inputs.len());
+                    inputs.insert(name.clone(), input.clone());
                 }
             }
 
@@ -1119,7 +1076,6 @@ pub fn push_constant(
 
             out = Some(PushConstant::Struct {
                 backing: vec![0; *span as usize],
-                input_map,
                 inputs,
                 align,
             })
@@ -1335,12 +1291,10 @@ impl TweakBindGroup {
         })
     }
 
-    fn get_mut(&mut self, addr: &VariableAddress) -> Option<MutInput> {
+    fn get_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
         match self.binding_entries.get_mut(addr.binding)? {
             BindingEntry::Texture { input, .. } => Some(input.into()),
-            BindingEntry::UniformBlock { inputs, .. } => inputs
-                .get_mut(addr.field.unwrap())
-                .map(|(_, i)| MutInput::new(i)),
+            BindingEntry::UniformBlock { inputs, .. } => inputs.get_mut(name).map(|i| i.into()),
             _ => None,
         }
     }
@@ -1420,10 +1374,10 @@ impl TweakBindGroup {
         }
     }
 
-    fn get(&self, addr: &VariableAddress) -> Option<&InputType> {
+    fn get(&self, name: &str, addr: &VariableAddress) -> Option<&InputType> {
         match self.binding_entries.get(addr.binding)? {
             BindingEntry::Texture { input, .. } => Some(input),
-            BindingEntry::UniformBlock { inputs, .. } => inputs.get(addr.field?).map(|(_, i)| i),
+            BindingEntry::UniformBlock { inputs, .. } => inputs.get(name),
             _ => None,
         }
     }
