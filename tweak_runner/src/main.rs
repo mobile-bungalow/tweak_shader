@@ -211,6 +211,11 @@ fn parse_commands() -> (PathBuf, String) {
         process::exit(1);
     };
 
+    if !std::path::PathBuf::from(&path).exists() {
+        eprintln!("{path} does not exist!");
+        process::exit(1);
+    }
+
     // ifn't ain't no fork.
     // fork it with no fork.
     // I sure hope this doesn't crash someones computer.

@@ -1,6 +1,5 @@
 use crate::input_type::*;
 use crate::uniforms;
-use crate::VarName;
 use naga::front::glsl;
 use wgpu::naga;
 
@@ -21,9 +20,8 @@ pub struct RenderContext {
     uniforms: uniforms::Uniforms,
     passes: Vec<RenderPass>,
     pipeline: Pipeline,
-    streams: BTreeMap<VarName, StreamInfo>,
-    texture_job_queue: BTreeMap<VarName, TextureJob>,
-    cpu_view_cache: BufferCache,
+    texture_job_queue: Vec<TextureJob>,
+    screen_buffer_cache: BufferCache,
     stage: wgpu::naga::ShaderStage,
 }
 
@@ -237,9 +235,8 @@ impl RenderContext {
             uniforms,
             pipeline,
             passes: pass_structure,
-            cpu_view_cache: BufferCache::new(&format, 1, 1, None, device),
-            texture_job_queue: BTreeMap::new(),
-            streams: BTreeMap::new(),
+            screen_buffer_cache: BufferCache::new(&format, 1, 1, None, device),
+            texture_job_queue: Vec::new(),
             stage: document.stage,
         })
     }
@@ -513,52 +510,6 @@ impl RenderContext {
         self.uniforms.get_input(name)
     }
 
-    /// Provides access to the raw float array of sample data
-    /// that will be converted into a texture
-    /// for the audio stream with the name `name`
-    /// * The data must be in a planar format.
-    /// * The data may have an FFT performed on it
-    /// returns None if the name provided does not correspond to a
-    /// valid audio input.
-    pub fn load_audio_stream_raw<S: AsRef<str>>(
-        &mut self,
-        name: S,
-        channels: u16,
-        samples: usize,
-    ) -> Option<&mut [f32]> {
-        if self.streams.get_mut(name.as_ref()).is_some() {
-            // weird borrow checker nuance
-            let stream = self.streams.get_mut(name.as_ref()).unwrap();
-            match stream {
-                StreamInfo::Audio { dirty, data, .. } => {
-                    *dirty = true;
-                    Some(data.as_mut_slice())
-                }
-                _ => None,
-            }
-        } else if self
-            .uniforms
-            .get_input_mut(name.as_ref())
-            .is_some_and(|ty| matches!(ty.variant(), InputVariant::AudioFft | InputVariant::Audio))
-        {
-            let val = StreamInfo::Audio {
-                dirty: true,
-                channels: channels as usize,
-                samples,
-                data: vec![0.0; channels as usize * samples],
-            };
-            self.streams.insert(name.as_ref().to_owned(), val);
-            if let StreamInfo::Audio { data, .. } = self.streams.get_mut(name.as_ref())? {
-                Some(data.as_mut_slice())
-            } else {
-                // unreachable
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     /// Loads a texture of the specified format into the variable with name `name`
     /// immediately.
     pub fn load_texture_immediate<S: AsRef<str>>(
@@ -668,15 +619,12 @@ impl RenderContext {
         }
 
         // only keep the most recent texture update
-        self.texture_job_queue.insert(
-            variable_name.clone(),
-            TextureJob {
-                data,
-                width,
-                height,
-                variable_name,
-            },
-        );
+        self.texture_job_queue.push(TextureJob {
+            data,
+            width,
+            height,
+            variable_name,
+        });
         true
     }
 
@@ -720,13 +668,16 @@ impl RenderContext {
         let fmt = self.uniforms.format();
 
         if !self
-            .cpu_view_cache
+            .screen_buffer_cache
             .supports_render(&fmt, width, height, None)
         {
-            self.cpu_view_cache = BufferCache::new(&fmt, width, height, None, device);
+            self.screen_buffer_cache = BufferCache::new(&fmt, width, height, None, device);
         };
 
-        let view = self.cpu_view_cache.tex().create_view(&Default::default());
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
 
         self.render(queue, device, &view, width, height);
 
@@ -735,7 +686,7 @@ impl RenderContext {
         read_texture_contents_to_slice(
             device,
             queue,
-            &self.cpu_view_cache,
+            &self.screen_buffer_cache,
             height,
             width,
             None,
@@ -763,22 +714,27 @@ impl RenderContext {
     ) {
         let fmt = self.uniforms.format();
 
-        if !self
-            .cpu_view_cache
-            .supports_render(&fmt, width, height, stride.map(|s| s as usize))
-        {
-            self.cpu_view_cache =
+        if !self.screen_buffer_cache.supports_render(
+            &fmt,
+            width,
+            height,
+            stride.map(|s| s as usize),
+        ) {
+            self.screen_buffer_cache =
                 BufferCache::new(&fmt, width, height, stride.map(|s| s as usize), device);
         };
 
-        let view = self.cpu_view_cache.tex().create_view(&Default::default());
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
 
         self.render(queue, device, &view, width, height);
 
         read_texture_contents_to_slice(
             device,
             queue,
-            &self.cpu_view_cache,
+            &self.screen_buffer_cache,
             height,
             width,
             stride,
@@ -787,49 +743,7 @@ impl RenderContext {
     }
 
     fn update_display_textures(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        for (name, val) in self.streams.iter_mut() {
-            match val {
-                StreamInfo::Video {
-                    dirty,
-                    height,
-                    width,
-                    ref mut data,
-                } if *dirty => {
-                    self.uniforms.load_texture(
-                        name,
-                        data.as_ref(),
-                        *height,
-                        *width,
-                        None,
-                        &wgpu::TextureFormat::Rgba8UnormSrgb,
-                        device,
-                        queue,
-                    );
-                    *dirty = false;
-                }
-                StreamInfo::Audio {
-                    dirty,
-                    samples,
-                    channels,
-                    data,
-                } if *dirty => {
-                    self.uniforms.load_texture(
-                        name,
-                        float_to_rgba8_snorm(data).as_slice(),
-                        *channels as u32,
-                        *samples as u32,
-                        None,
-                        &wgpu::TextureFormat::Rgba8UnormSrgb,
-                        device,
-                        queue,
-                    );
-                    *dirty = false;
-                }
-                _ => {}
-            }
-        }
-
-        while let Some((_, job)) = self.texture_job_queue.pop_first() {
+        while let Some(job) = self.texture_job_queue.pop() {
             self.uniforms.load_texture(
                 &job.variable_name,
                 job.data.as_ref(),
@@ -923,9 +837,7 @@ impl RenderContext {
     /// It will be replaced with a placeholder texture which is a 1x1 transparent pixel.
     /// returns true if the texture existed.
     pub fn remove_texture(&mut self, var: &str) -> bool {
-        let stat = self.uniforms.unload_texture(var);
-        let stream = self.streams.remove(var).is_some();
-        stat || stream
+        self.uniforms.unload_texture(var)
     }
 
     /// Returns true if this render context builds up
@@ -1018,22 +930,6 @@ impl RenderContext {
     pub fn update_resolution(&mut self, res: [f32; 2]) {
         self.uniforms.global_data_mut().resolution = [res[0], res[1], res[0] / res[1]];
     }
-}
-
-#[derive(Debug)]
-enum StreamInfo {
-    Video {
-        dirty: bool,
-        height: u32,
-        width: u32,
-        data: Vec<u8>,
-    },
-    Audio {
-        dirty: bool,
-        samples: usize,
-        channels: usize,
-        data: Vec<f32>,
-    },
 }
 
 #[derive(Debug)]
@@ -1233,26 +1129,6 @@ fn target_desc(width: u32, height: u32, format: TextureFormat) -> wgpu::TextureD
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     }
-}
-
-fn float_to_rgba8_snorm(input: &[f32]) -> Vec<u8> {
-    let mut output = vec![0; input.len() * 4];
-
-    let sum: f32 = input.iter().sum();
-    let avg = sum / input.len() as f32;
-
-    for (i, &value) in input.iter().enumerate() {
-        let normalized_value = 0.75 + (value - avg);
-
-        let color = (normalized_value * 255.0).round().clamp(0.0, 255.0) as u8;
-
-        output[i * 4] = color;
-        output[i * 4 + 1] = color;
-        output[i * 4 + 2] = color;
-        output[i * 4 + 3] = 255;
-    }
-
-    output
 }
 
 fn display_errors(errors: &[glsl::Error], source: &str) -> String {

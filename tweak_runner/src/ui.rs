@@ -89,7 +89,7 @@ pub fn side_panel(
                 let mut last_variant = inputs
                     .first()
                     .map(|(_, val)| val.variant())
-                    .unwrap_or(InputVariant::Event);
+                    .unwrap_or(InputVariant::Point);
 
                 for (name, mut val) in inputs {
                     let variant = val.variant();
@@ -202,7 +202,7 @@ fn input_widget(
     ui: &mut Ui,
 ) {
     match val.variant() {
-        InputVariant::Image | InputVariant::Audio | InputVariant::AudioFft => {
+        InputVariant::Image => {
             file_selector(ui, val, name, ui_state, message_sender.clone());
         }
         InputVariant::Float => {

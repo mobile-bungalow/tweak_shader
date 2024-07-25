@@ -532,9 +532,6 @@ pub enum InputVariant {
     Bool,
     Color,
     Image,
-    Audio,
-    AudioFft,
-    Event,
     Bytes,
 }
 

@@ -8,10 +8,10 @@ pub enum Error {
     UnknownType(String),
     MalformedInput(String),
     MissingName(String),
-    InvalidMaxSamples(String),
-    InputPathNotString(String, String),
     InvalidPassDescriptor(String),
     InvalidSamplerDescriptor(String),
+    InvalidTarget(String),
+    MultipleScreenTargets,
     MalformedPass(String, String),
     InvalidVersion(String),
     Parsing(String),
@@ -51,43 +51,44 @@ impl fmt::Display for Error {
                 )
             }
             Error::InvalidVersion(pragma) => {
-                write!(f, "Invalid Tweak Version directive: {pragma}, must be #pragma tweak_version(version=<number>)")
+                write!(f, "Invalid Tweak Version directive: #pragma version{pragma}, must be #pragma version(version=<number>)")
             }
             Error::UnknownType(pragma) => {
-                write!(f, "Unknown type in input directive: {pragma} must be one of color, float, int, event, point, image, audio, audiofft, bool.")
+                write!(f, "Unknown type in input directive: #pragma input{pragma} must be one of color, float, int, event, point, image, audio, audiofft, bool.")
             }
             Error::MalformedInput(pragma) => {
-                write!(f, "Malformed input directive in {pragma}: must start with one of color, float, int, event, point, image, audio, audiofft, bool.")
+                write!(f, "Malformed input directive in #pragma input{pragma}: must start with one of color, float, int, event, point, image, audio, audiofft, bool.")
             }
             Error::MissingName(pragma) => {
-                write!(f, "Missing name in input directive: {pragma}")
-            }
-            Error::InvalidMaxSamples(pragma) => {
-                write!(f, "Input max_samples invalid: {}", pragma)
-            }
-            Error::InputPathNotString(pragma, path) => {
-                write!(f, "Input Path is not a string: {}: path: {}", pragma, path)
+                write!(f, "Missing name in input directive: #pragma input{pragma}")
             }
             Error::MalformedPass(pragma, e) => {
-                write!(f, "Invalid pass descriptor {pragma}: {e}")
+                write!(f, "Invalid pass descriptor #pragma pass{pragma}: {e}")
             }
             Error::InvalidPassDescriptor(pragma) => {
                 write!(
                     f,
-                    "Invalid pass directive {pragma}: needs an index specifier as the first field, such as #pragma pass(1)."
+                    "Invalid pass directive #pragma pass{pragma}: needs an index specifier as the first field, such as #pragma pass(1)."
                 )
             }
             Error::InvalidSamplerDescriptor(pragma) => {
                 write!(
                     f,
-                    "Invalid sampler directive {pragma}: must be of the form #pragma sampler(name='foo', linear|nearest, clamp|repeat|mirror)."
+                    "Invalid sampler directive #pragma sampler{pragma}: must be of the form #pragma sampler(name='foo', linear|nearest, clamp|repeat|mirror)."
                 )
             }
             Error::Parsing(msg) => {
                 write!(f, "Error in input: {msg}")
             }
             Error::StageSpecifier(pragma) => {
-                write!(f, "There must only be one stage spacifier of the form: #pragma stage('compute'|'fragment'), found {pragma}")
+                write!(f, "There must only be one stage spacifier of the form: #pragma stage('compute'|'fragment'), found #pragma stage{pragma}")
+            }
+
+            Error::InvalidTarget(pragma) => {
+                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <screen>, dimensions=[width, height]), found #pragma target{pragma}")
+            }
+            Error::MultipleScreenTargets => {
+                write!(f, "Multiple screen targets defined, only one target directive can use the screen keyword at a time.")
             }
         }
     }
@@ -120,6 +121,19 @@ pub struct RenderPass {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct Target {
+    pub name: String,
+    // whether or not the buffer is cleared every render
+    pub persistent: bool,
+    // if true (there can only be one), then this will be used as the target texture
+    pub screen: bool,
+    // a height, or the render height as default
+    pub width: Option<u32>,
+    // a width, or the render height as default
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct SamplerDesc {
     pub filter_mode: wgpu::FilterMode,
     pub clamp_mode: wgpu::AddressMode,
@@ -133,18 +147,26 @@ pub struct Document {
     pub stage: wgpu::naga::ShaderStage,
     pub inputs: BTreeMap<String, crate::input_type::InputType>,
     pub passes: Vec<RenderPass>,
+    pub targets: Vec<Target>,
     pub samplers: BTreeMap<String, SamplerDesc>,
 }
 
+impl Default for Document {
+    fn default() -> Self {
+        Document {
+            utility_block_name: None,
+            stage: wgpu::naga::ShaderStage::Fragment,
+            version: 1.0,
+            passes: vec![],
+            targets: vec![],
+            inputs: BTreeMap::new(),
+            samplers: BTreeMap::new(),
+        }
+    }
+}
+
 pub fn parse_document(input: &str) -> Result<Document, Error> {
-    let mut desc = Document {
-        utility_block_name: None,
-        stage: wgpu::naga::ShaderStage::Fragment,
-        version: 1.0,
-        passes: vec![],
-        inputs: BTreeMap::new(),
-        samplers: BTreeMap::new(),
-    };
+    let mut desc = Document::default();
 
     let version = input
         .lines()
@@ -226,7 +248,38 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
         }
     }
 
-    desc.passes.sort_by_key(|p| p.index);
+    let targets = input
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("#pragma target"));
+
+    let mut screen_found = false;
+    for target in targets {
+        let (_, list) = parse_qualifier_list(target).map_err(|e| display_err(target, e))?;
+
+        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
+            list.as_slice()
+        else {
+            return Err(Error::InvalidTarget(target.into()));
+        };
+
+        match (name_literal.as_str(), name, rest) {
+            ("name", name, rest) => {
+                let target = create_target(name, rest)?;
+
+                if target.screen {
+                    if screen_found {
+                        return Err(Error::MultipleScreenTargets);
+                    } else {
+                        screen_found = true;
+                    }
+                }
+                desc.targets.push(target);
+            }
+            _ => {
+                return Err(Error::InvalidTarget(target.into()));
+            }
+        }
+    }
 
     let samplers = input
         .lines()
@@ -272,7 +325,6 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
                 }
             }
             _ => {
-                dbg!(list);
                 return Err(Error::InvalidPassDescriptor(sampler.into()));
             }
         }
@@ -360,6 +412,29 @@ pub fn seek<I: TryFrom<QVal, Error = Error>>(
         }
     }
     None
+}
+
+fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target, Error> {
+    let mut pass = Target {
+        name: name.to_owned(),
+        screen: false,
+        persistent: false,
+        width: None,
+        height: None,
+    };
+
+    pass.height = seek::<u32>(slice, "height").transpose()?;
+    pass.width = seek::<u32>(slice, "width").transpose()?;
+
+    pass.persistent = slice
+        .iter()
+        .any(|(q, _)| matches!(q, QVal::Id(id) if id == "persistent"));
+
+    pass.screen = slice
+        .iter()
+        .any(|(q, _)| matches!(q, QVal::Id(id) if id == "screen"));
+
+    Ok(pass)
 }
 
 fn create_pass(slice: &[(QVal, Option<QVal>)], index: usize) -> Result<RenderPass, Error> {
@@ -800,7 +875,13 @@ mod tests {
         let pragma = "#pragma stage(compute)";
         parse_document(pragma).unwrap();
 
+        let pragma = "#pragma target(name='done_2', screen, dimensions=[100,100])";
+        parse_document(pragma).unwrap();
+
         let pragma = "#pragma sampler(name=josh, fake)";
+        assert!(parse_document(pragma).is_err());
+
+        let pragma = "#pragma target(name=josh, fake)";
         assert!(parse_document(pragma).is_err());
 
         let pragma = "#pragma input(float, name=\"test\")";
