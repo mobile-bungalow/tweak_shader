@@ -91,6 +91,8 @@ impl RenderContext {
 
         let mut pass_structure = vec![];
 
+        // internal passes should be HDR, they are often used
+        // pass data around.
         let pass_texture = if is_floating_point_in_shader(&format) {
             TextureFormat::Rgba16Float
         } else {
@@ -242,6 +244,11 @@ impl RenderContext {
     /// Returns true if the loaded shader is a compute shader.
     pub fn is_compute(&self) -> bool {
         self.stage == ShaderStage::Compute
+    }
+
+    /// Iterates over the current storage texture targets
+    pub fn iter_targets(&self) -> impl Iterator<Item = &uniforms::Target> {
+        self.uniforms.iter_targets()
     }
 
     /// Renders the shader maintained by this context to the provided texture view.

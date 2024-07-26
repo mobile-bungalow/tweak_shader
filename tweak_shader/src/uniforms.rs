@@ -129,9 +129,23 @@ struct VariableAddress {
 }
 
 #[derive(Debug, Clone)]
-struct Target {
+pub struct Target {
     doc_desc: parsing::Target,
     format: wgpu::TextureFormat,
+}
+
+impl Target {
+    pub fn name(&self) -> &str {
+        &self.doc_desc.name
+    }
+
+    pub fn fmt(&self) -> &wgpu::TextureFormat {
+        &self.format
+    }
+
+    pub fn persistent(&self) -> bool {
+        self.doc_desc.persistent
+    }
 }
 
 #[derive(Debug)]
@@ -704,6 +718,10 @@ impl Uniforms {
         set.get_mut(name, addr)
     }
 
+    pub fn iter_targets(&self) -> impl Iterator<Item = &Target> {
+        self.targets.iter()
+    }
+
     pub fn iter_custom_uniforms_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
         let push = if let Some(PushConstant::Struct { inputs, .. }) = self.push_constants.as_mut() {
             Some(Box::new(inputs.iter_mut().map(|(k, v)| (k, v.into())))
@@ -895,7 +913,7 @@ pub enum BindingEntry {
         // the binding index , might not be contiguous
         binding: u32,
         // texture resource if not default
-        samp: Option<wgpu::Sampler>,
+        samp: wgpu::Sampler,
         name: String,
     },
 }
@@ -1246,6 +1264,7 @@ impl TweakBindGroup {
                 }
                 naga::TypeInner::Sampler { .. } => {
                     let mut samp_desc = DEFAULT_SAMPLER;
+
                     if let Some(name) = uniform.name.as_ref() {
                         if let Some(config) = document.samplers.get(name) {
                             samp_desc.mag_filter = config.filter_mode;
@@ -1268,7 +1287,7 @@ impl TweakBindGroup {
 
                     binding_entries.push(BindingEntry::Sampler {
                         binding,
-                        samp: Some(samp),
+                        samp,
                         name: uniform.name.clone().unwrap_or_default(),
                     });
 
@@ -1504,11 +1523,12 @@ impl TweakBindGroup {
                 } => {
                     let mut offset = 0;
                     let mut changed = false;
-                    for input in inputs.iter() {
-                        let bytes = input.1.as_bytes();
+                    for input in inputs.values() {
+                        let bytes = input.as_bytes();
 
                         // Calculate the padding needed to satisfy the alignment requirement
                         let padding = (*align - (offset % *align)) % *align;
+
                         if bytes.len() > padding {
                             offset += padding;
                         }
@@ -1539,28 +1559,10 @@ impl TweakBindGroup {
                     };
                 }
                 BindingEntry::Sampler { binding, samp, .. } => {
-                    if let Some(samp) = samp {
-                        out.push(wgpu::BindGroupEntry {
-                            binding: *binding,
-                            resource: wgpu::BindingResource::Sampler(&*samp),
-                        });
-                    } else {
-                        let mut samp_desc = DEFAULT_SAMPLER;
-
-                        if matches!(place_holder_tex.format(), wgpu::TextureFormat::Rgba32Float) {
-                            samp_desc.mag_filter = wgpu::FilterMode::Nearest;
-                            samp_desc.min_filter = wgpu::FilterMode::Nearest;
-                            samp_desc.mipmap_filter = wgpu::FilterMode::Nearest;
-                        };
-
-                        let default_sampler = device.create_sampler(&samp_desc);
-
-                        *samp = Some(default_sampler);
-                        out.push(wgpu::BindGroupEntry {
-                            binding: *binding,
-                            resource: wgpu::BindingResource::Sampler(samp.as_ref().unwrap()),
-                        });
-                    }
+                    out.push(wgpu::BindGroupEntry {
+                        binding: *binding,
+                        resource: wgpu::BindingResource::Sampler(&*samp),
+                    });
                 }
             }
         }
@@ -1619,7 +1621,7 @@ fn image_entry_from_naga(
             },
             binding,
             count,
-            visibility: ShaderStages::all(),
+            visibility: ShaderStages::COMPUTE | ShaderStages::FRAGMENT,
         },
     }
 }

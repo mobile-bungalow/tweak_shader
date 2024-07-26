@@ -718,6 +718,43 @@ fn inputs_iter() {
     }
 }
 
+const COMPUTE_TARGETS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+#pragma stage(compute)
+
+layout(set=0, binding=1) uniform sampler default_sampler;
+
+#pragma target(name=output_image)
+layout(rgba32f, set=0, binding=2) uniform writeonly image2D output_image;
+
+#pragma target(name=scratch_buffer, persistent)
+layout(rgba32f, set=0, binding=3) uniform writeonly image2D scratch_buffer;
+
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() {
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+}
+"#;
+
+#[test]
+fn compute_targets() {
+    let (device, queue) = set_up_wgpu();
+
+    let inputs_test = RenderContext::new(
+        COMPUTE_TARGETS,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    assert!(inputs_test.is_compute());
+    assert_eq!(2, inputs_test.iter_targets().count());
+}
+
 const NO_EXCESS: &str = r#"
 #version 450
 
@@ -885,8 +922,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             .await
             .expect("Failed to find an appropriate adapter")
     });
-    let mut required_limits =
-        wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+    let mut required_limits = wgpu::Limits::default().using_resolution(adapter.limits());
     required_limits.max_push_constant_size = 128;
 
     let (d, q) = pollster::block_on(async {
@@ -894,7 +930,8 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::PUSH_CONSTANTS,
+                    required_features: wgpu::Features::PUSH_CONSTANTS
+                        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     required_limits,
                 },
                 None,

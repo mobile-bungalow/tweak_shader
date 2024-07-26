@@ -3,6 +3,9 @@ use std::collections::BTreeMap;
 use crate::input_type::{InputType, ShaderBool, TextureStatus};
 use std::fmt;
 
+// In the future I would like to replace the parsing module with a more principled parser
+// for each pragma instead of the current adhoc version.
+
 #[derive(Debug)]
 pub enum Error {
     UnknownType(String),
@@ -125,8 +128,6 @@ pub struct Target {
     pub name: String,
     // whether or not the buffer is cleared every render
     pub persistent: bool,
-    // if true (there can only be one), then this will be used as the target texture
-    pub screen: bool,
     // a height, or the render height as default
     pub width: Option<u32>,
     // a width, or the render height as default
@@ -198,9 +199,7 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
                     _ => {}
                 };
 
-                if stage.next().is_none() {
-                    desc.utility_block_name = Some(id.clone());
-                } else {
+                if !stage.next().is_none() {
                     Err(Error::StageSpecifier(rest.to_owned()))?;
                 }
             }
@@ -267,14 +266,6 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
         match (name_literal.as_str(), name, rest) {
             ("name", name, rest) => {
                 let target = create_target(name, rest)?;
-
-                if target.screen {
-                    if screen_found {
-                        return Err(Error::MultipleScreenTargets);
-                    } else {
-                        screen_found = true;
-                    }
-                }
                 desc.targets.push(target);
             }
             _ => {
@@ -419,7 +410,6 @@ pub fn seek<I: TryFrom<QVal, Error = Error>>(
 fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target, Error> {
     let mut pass = Target {
         name: name.to_owned(),
-        screen: false,
         persistent: false,
         width: None,
         height: None,
@@ -431,10 +421,6 @@ fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target
     pass.persistent = slice
         .iter()
         .any(|(q, _)| matches!(q, QVal::Id(id) if id == "persistent"));
-
-    pass.screen = slice
-        .iter()
-        .any(|(q, _)| matches!(q, QVal::Id(id) if id == "screen"));
 
     Ok(pass)
 }

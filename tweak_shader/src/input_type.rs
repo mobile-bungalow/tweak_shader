@@ -3,6 +3,8 @@ use bytemuck::*;
 use wgpu::naga;
 use wgpu::naga::{ScalarKind, TypeInner};
 
+// In the future we should remove a lot of this code by using "derive_more"
+
 /// RGBA 4 component color.
 pub type Color = [f32; 4];
 
@@ -55,10 +57,6 @@ pub struct MutInput<'a> {
 }
 
 impl<'a> MutInput<'a> {
-    pub(crate) fn new(inner: &'a mut InputType) -> Self {
-        MutInput { inner }
-    }
-
     /// Returns the type of this variant
     pub fn variant(&self) -> InputVariant {
         InputVariant::from(&*self.inner)
