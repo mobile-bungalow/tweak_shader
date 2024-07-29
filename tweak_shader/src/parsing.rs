@@ -42,6 +42,8 @@ pub enum Error {
     InvalidPassDescriptor(String),
     InvalidSamplerDescriptor(String),
     InvalidTarget(String),
+    InvalidBuffer(String),
+    MissinBufferLength,
     MultipleScreenTargets,
     MalformedPass(String, String),
     InvalidVersion(String),
@@ -105,7 +107,7 @@ impl fmt::Display for Error {
             Error::InvalidSamplerDescriptor(pragma) => {
                 write!(
                     f,
-                    "Invalid sampler directive #pragma sampler{pragma}: must be of the form #pragma sampler(name='foo', linear|nearest, clamp|repeat|mirror)."
+                    "Invalid sampler directive #pragma sampler{pragma}: must be of the form #pragma sampler(name='foo', linear|nearest, <clamp|repeat|mirror>)."
                 )
             }
             Error::Parsing(msg) => {
@@ -116,7 +118,14 @@ impl fmt::Display for Error {
             }
 
             Error::InvalidTarget(pragma) => {
-                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <screen>, height=n, width=n), found #pragma target{pragma}")
+                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <persistent>, <height=n>, <width=n>), found #pragma target{pragma}")
+            }
+            Error::InvalidBuffer(pragma) => {
+                write!(f, "Invalid buffer directive, must be of the form #pragma buffer(name='var_name', <persistent>, length=n), found #pragma target{pragma}")
+            }
+
+            Error::MissinBufferLength => {
+                write!(f, "Buffer directive missing length attribute.")
             }
             Error::MultipleScreenTargets => {
                 write!(f, "Multiple screen targets defined, only one target directive can use the screen keyword at a time.")
@@ -274,6 +283,28 @@ pub struct Buffer {
     pub length: u32,
 }
 
+impl FromStr for Buffer {
+    type Err = Error;
+
+    fn from_str(buffer: &str) -> Result<Self, Self::Err> {
+        let (_, list) = parse_qualifier_list(buffer).map_err(|e| display_err(buffer, e))?;
+
+        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
+            list.as_slice()
+        else {
+            return Err(Error::InvalidTarget(buffer.into()));
+        };
+
+        match (name_literal.as_str(), name, rest) {
+            ("name", name, rest) => {
+                let buffer = create_buffer(name, rest)?;
+                Ok(buffer)
+            }
+            _ => Err(Error::InvalidTarget(buffer.into())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SamplerDesc {
     pub name: String,
@@ -394,6 +425,10 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
             desc.passes.push(pass.parse()?);
         }
 
+        if let Some(buffer) = line.trim().strip_prefix("#pragma buffer") {
+            desc.buffers.push(buffer.parse()?);
+        }
+
         if let Some(target) = line.trim().strip_prefix("#pragma target") {
             desc.targets.push(target.parse()?);
         }
@@ -431,6 +466,24 @@ pub fn seek<I: TryFrom<QVal, Error = Error>>(
         }
     }
     None
+}
+
+fn create_buffer(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Buffer, Error> {
+    let mut buffer = Buffer {
+        name: name.to_owned(),
+        persistent: false,
+        length: 0,
+    };
+
+    buffer.length = seek::<u32>(slice, "length")
+        .transpose()?
+        .ok_or(Error::MissinBufferLength)?;
+
+    buffer.persistent = slice
+        .iter()
+        .any(|(q, _)| matches!(q, QVal::Id(id) if id == "persistent"));
+
+    Ok(buffer)
 }
 
 fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target, Error> {
@@ -888,7 +941,16 @@ mod tests {
         let pragma = "#pragma stage(name=josh)";
         assert!(parse_document(pragma).is_err());
 
+        let pragma = "#pragma buffer(name=josh)";
+        assert!(parse_document(pragma).is_err());
+
         let pragma = "#pragma pass(1, height=1)";
+        parse_document(pragma).unwrap();
+
+        let pragma = "#pragma buffer(name=sliminy, length=1)";
+        parse_document(pragma).unwrap();
+
+        let pragma = "#pragma buffer(name=sliminy, length=1, persistent)";
         parse_document(pragma).unwrap();
 
         let pragma = "#pragma stage(fragment)";
