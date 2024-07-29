@@ -1266,7 +1266,7 @@ impl TweakBindGroup {
                     let mut samp_desc = DEFAULT_SAMPLER;
 
                     if let Some(name) = uniform.name.as_ref() {
-                        if let Some(config) = document.samplers.get(name) {
+                        if let Some(config) = document.samplers.iter().find(|e| &e.name == name) {
                             samp_desc.mag_filter = config.filter_mode;
                             samp_desc.min_filter = config.filter_mode;
                             samp_desc.mipmap_filter = config.filter_mode;

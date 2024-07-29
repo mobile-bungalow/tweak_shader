@@ -1,10 +1,38 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 
 use crate::input_type::{InputType, ShaderBool, TextureStatus};
 use std::fmt;
 
 // In the future I would like to replace the parsing module with a more principled parser
 // for each pragma instead of the current adhoc version.
+
+#[derive(Debug, Clone)]
+pub struct Document {
+    // it's an f32 for convenience sake
+    pub version: f32,
+    pub utility_block_name: Option<String>,
+    pub stage: wgpu::naga::ShaderStage,
+    pub inputs: BTreeMap<String, crate::input_type::InputType>,
+    pub passes: Vec<RenderPass>,
+    pub buffers: Vec<Buffer>,
+    pub targets: Vec<Target>,
+    pub samplers: Vec<SamplerDesc>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Document {
+            utility_block_name: None,
+            stage: wgpu::naga::ShaderStage::Fragment,
+            version: 1.0,
+            buffers: vec![],
+            passes: vec![],
+            targets: vec![],
+            inputs: BTreeMap::new(),
+            samplers: vec![],
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum Error {
@@ -123,9 +151,30 @@ pub struct RenderPass {
     pub target_texture: Option<String>,
 }
 
+impl FromStr for RenderPass {
+    type Err = Error;
+
+    fn from_str(pass: &str) -> Result<Self, Self::Err> {
+        let (_, list) = parse_qualifier_list(pass).map_err(|e| display_err(pass, e))?;
+        match list.as_slice() {
+            [(QVal::Num(pass_idx), None), rest @ ..] => {
+                let pass = create_pass(rest, *pass_idx as usize)
+                    .map_err(|e| Error::MalformedPass(pass.to_owned(), format!("{e}")))?;
+                Ok(pass)
+            }
+            _ => Err(Error::InvalidPassDescriptor(pass.into())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Target {
     pub name: String,
+    // a texture to copy this target into in future passes
+    // this is useful because on the web textures are write only,
+    // so this may be our only option for what would otherwise
+    // be single pass renders.
+    pub forward_target: Option<String>,
     // whether or not the buffer is cleared every render
     pub persistent: bool,
     // a height, or the render height as default
@@ -134,34 +183,145 @@ pub struct Target {
     pub height: Option<u32>,
 }
 
+impl FromStr for Target {
+    type Err = Error;
+
+    fn from_str(target: &str) -> Result<Self, Self::Err> {
+        let (_, list) = parse_qualifier_list(target).map_err(|e| display_err(target, e))?;
+
+        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
+            list.as_slice()
+        else {
+            return Err(Error::InvalidTarget(target.into()));
+        };
+
+        match (name_literal.as_str(), name, rest) {
+            ("name", name, rest) => {
+                let target = create_target(name, rest)?;
+                Ok(target)
+            }
+            _ => Err(Error::InvalidTarget(target.into())),
+        }
+    }
+}
+
+struct InputEntry(String, InputType);
+
+impl FromStr for InputEntry {
+    type Err = Error;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let (_, list) = parse_qualifier_list(input).map_err(|e| display_err(input, e))?;
+        let bail = |e| map_input_err(e, input);
+
+        let [(QVal::Id(type_id), None), rest @ ..] = list.as_slice() else {
+            return Err(Error::MalformedInput(input.into()));
+        };
+
+        match type_id.as_str() {
+            "color" => {
+                let (name, color) = create_input(rest).map_err(bail)?;
+                Ok(InputEntry(name, InputType::Color(color)))
+            }
+            "float" => {
+                let (name, float) = create_input(rest).map_err(bail)?;
+                Ok(InputEntry(name, InputType::Float(float)))
+            }
+            "int" => {
+                let (name, int) = create_input(rest).map_err(bail)?;
+
+                let list = if let Some(labels) = seek::<Vec<String>>(rest, "labels") {
+                    let labels = labels?;
+                    if let Some(values) = seek::<Vec<i32>>(rest, "values") {
+                        let values = values?;
+                        Some(labels.into_iter().zip(values.into_iter()).collect())
+                    } else {
+                        Err(Error::MalformedIntList(input.to_owned()))?
+                    }
+                } else {
+                    None
+                };
+
+                Ok(InputEntry(name, InputType::Int(int, list)))
+            }
+            "point" => {
+                let (name, point) = create_input(rest).map_err(bail)?;
+                Ok(InputEntry(name, InputType::Point(point)))
+            }
+            "bool" => {
+                let (name, booli) = create_input::<ShaderBool, _>(rest).map_err(bail)?;
+                Ok(InputEntry(name, InputType::Bool(booli)))
+            }
+            "image" => {
+                let name = seek(rest, "name").ok_or(Error::MissingName(input.into()))?;
+
+                let name: String = name.map_err(|e| map_input_err(format!("{e}"), input))?;
+
+                Ok(InputEntry(name, InputType::Image(TextureStatus::Uninit)))
+            }
+            _ => Err(Error::UnknownType(input.into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Buffer {
+    // name of the buffer variable
+    pub name: String,
+    // whether or not this is cleared between renders, (not passes)
+    pub persistent: bool,
+    // the default allocated length of the buffer
+    pub length: u32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SamplerDesc {
+    pub name: String,
     pub filter_mode: wgpu::FilterMode,
     pub clamp_mode: wgpu::AddressMode,
 }
 
-#[derive(Debug, Clone)]
-pub struct Document {
-    // it's an f32 for convenience sake
-    pub version: f32,
-    pub utility_block_name: Option<String>,
-    pub stage: wgpu::naga::ShaderStage,
-    pub inputs: BTreeMap<String, crate::input_type::InputType>,
-    pub passes: Vec<RenderPass>,
-    pub targets: Vec<Target>,
-    pub samplers: BTreeMap<String, SamplerDesc>,
-}
+impl FromStr for SamplerDesc {
+    type Err = Error;
 
-impl Default for Document {
-    fn default() -> Self {
-        Document {
-            utility_block_name: None,
-            stage: wgpu::naga::ShaderStage::Fragment,
-            version: 1.0,
-            passes: vec![],
-            targets: vec![],
-            inputs: BTreeMap::new(),
-            samplers: BTreeMap::new(),
+    fn from_str(sampler: &str) -> Result<Self, Self::Err> {
+        let (_, list) = parse_qualifier_list(sampler).map_err(|e| display_err(sampler, e))?;
+
+        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
+            list.as_slice()
+        else {
+            return Err(Error::InvalidSamplerDescriptor(sampler.into()));
+        };
+
+        match (name_literal.as_str(), name, rest) {
+            ("name", name, rest) => {
+                let mut filter_mode = wgpu::FilterMode::Nearest;
+                let mut clamp_mode = wgpu::AddressMode::ClampToEdge;
+
+                for item in rest {
+                    let (QVal::Id(specifier), None) = item else {
+                        return Err(Error::InvalidSamplerDescriptor(sampler.into()));
+                    };
+
+                    match specifier.as_str() {
+                        "linear" => filter_mode = wgpu::FilterMode::Linear,
+                        "nearest" => filter_mode = wgpu::FilterMode::Nearest,
+                        "clamp" => clamp_mode = wgpu::AddressMode::ClampToEdge,
+                        "repeat" => clamp_mode = wgpu::AddressMode::Repeat,
+                        "mirror" => clamp_mode = wgpu::AddressMode::MirrorRepeat,
+                        _ => {
+                            return Err(Error::InvalidPassDescriptor(sampler.into()));
+                        }
+                    }
+                }
+
+                Ok(SamplerDesc {
+                    name: name.to_owned(),
+                    filter_mode,
+                    clamp_mode,
+                })
+            }
+            _ => Err(Error::InvalidPassDescriptor(sampler.into())),
         }
     }
 }
@@ -229,156 +389,22 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
         }
     }
 
-    let passes = input
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("#pragma pass"));
-
-    for pass in passes {
-        let (_, list) = parse_qualifier_list(pass).map_err(|e| display_err(pass, e))?;
-        match list.as_slice() {
-            [(QVal::Num(pass_idx), None), rest @ ..] => {
-                let pass = create_pass(rest, *pass_idx as usize)
-                    .map_err(|e| Error::MalformedPass(pass.to_owned(), format!("{e}")))?;
-                desc.passes.push(pass);
-            }
-            _ => {
-                Err(Error::InvalidPassDescriptor(pass.into()))?;
-            }
+    for line in input.lines() {
+        if let Some(pass) = line.trim().strip_prefix("#pragma pass") {
+            desc.passes.push(pass.parse()?);
         }
-    }
 
-    desc.passes.sort_by_key(|pass| pass.index);
-
-    let targets = input
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("#pragma target"));
-
-    let mut screen_found = false;
-    for target in targets {
-        let (_, list) = parse_qualifier_list(target).map_err(|e| display_err(target, e))?;
-
-        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
-            list.as_slice()
-        else {
-            return Err(Error::InvalidTarget(target.into()));
-        };
-
-        match (name_literal.as_str(), name, rest) {
-            ("name", name, rest) => {
-                let target = create_target(name, rest)?;
-                desc.targets.push(target);
-            }
-            _ => {
-                return Err(Error::InvalidTarget(target.into()));
-            }
+        if let Some(target) = line.trim().strip_prefix("#pragma target") {
+            desc.targets.push(target.parse()?);
         }
-    }
 
-    let samplers = input
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("#pragma sampler"));
-
-    for sampler in samplers {
-        let (_, list) = parse_qualifier_list(sampler).map_err(|e| display_err(sampler, e))?;
-
-        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
-            list.as_slice()
-        else {
-            return Err(Error::InvalidSamplerDescriptor(sampler.into()));
-        };
-
-        match (name_literal.as_str(), name, rest) {
-            ("name", name, rest) => {
-                let mut filter_mode = wgpu::FilterMode::Nearest;
-                let mut clamp_mode = wgpu::AddressMode::ClampToEdge;
-
-                for item in rest {
-                    let (QVal::Id(specifier), None) = item else {
-                        return Err(Error::InvalidSamplerDescriptor(sampler.into()));
-                    };
-
-                    match specifier.as_str() {
-                        "linear" => filter_mode = wgpu::FilterMode::Linear,
-                        "nearest" => filter_mode = wgpu::FilterMode::Nearest,
-                        "clamp" => clamp_mode = wgpu::AddressMode::ClampToEdge,
-                        "repeat" => clamp_mode = wgpu::AddressMode::Repeat,
-                        "mirror" => clamp_mode = wgpu::AddressMode::MirrorRepeat,
-                        _ => {
-                            return Err(Error::InvalidPassDescriptor(sampler.into()));
-                        }
-                    }
-
-                    desc.samplers.insert(
-                        name.to_owned(),
-                        SamplerDesc {
-                            filter_mode,
-                            clamp_mode,
-                        },
-                    );
-                }
-            }
-            _ => {
-                return Err(Error::InvalidPassDescriptor(sampler.into()));
-            }
+        if let Some(sampler) = line.trim().strip_prefix("#pragma sampler") {
+            desc.samplers.push(sampler.parse()?);
         }
-    }
 
-    let inputs = input
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("#pragma input"));
-
-    for input in inputs {
-        let (_, list) = parse_qualifier_list(input).map_err(|e| display_err(input, e))?;
-        let bail = |e| map_input_err(e, input);
-
-        let [(QVal::Id(type_id), None), rest @ ..] = list.as_slice() else {
-            return Err(Error::MalformedInput(input.into()));
-        };
-
-        match type_id.as_str() {
-            "color" => {
-                let (name, color) = create_input(rest).map_err(bail)?;
-                desc.inputs.insert(name, InputType::Color(color));
-            }
-            "float" => {
-                let (name, float) = create_input(rest).map_err(bail)?;
-                desc.inputs.insert(name, InputType::Float(float));
-            }
-            "int" => {
-                let (name, int) = create_input(rest).map_err(bail)?;
-
-                let list = if let Some(labels) = seek::<Vec<String>>(rest, "labels") {
-                    let labels = labels?;
-                    if let Some(values) = seek::<Vec<i32>>(rest, "values") {
-                        let values = values?;
-                        Some(labels.into_iter().zip(values.into_iter()).collect())
-                    } else {
-                        Err(Error::MalformedIntList(input.to_owned()))?
-                    }
-                } else {
-                    None
-                };
-                desc.inputs.insert(name, InputType::Int(int, list));
-            }
-            "point" => {
-                let (name, point) = create_input(rest).map_err(bail)?;
-                desc.inputs.insert(name, InputType::Point(point));
-            }
-            "bool" => {
-                let (name, booli) = create_input::<ShaderBool, _>(rest).map_err(bail)?;
-                desc.inputs.insert(name, InputType::Bool(booli));
-            }
-            "image" => {
-                let name = seek(rest, "name").ok_or(Error::MissingName(input.into()))?;
-
-                let name: String = name.map_err(|e| map_input_err(format!("{e}"), input))?;
-
-                desc.inputs
-                    .insert(name.clone(), InputType::Image(TextureStatus::Uninit));
-            }
-            _ => {
-                Err(Error::UnknownType(input.into()))?;
-            }
+        if let Some(input) = line.trim().strip_prefix("#pragma input") {
+            let InputEntry(name, entry) = input.parse()?;
+            desc.inputs.insert(name, entry);
         }
     }
 
@@ -409,6 +435,7 @@ pub fn seek<I: TryFrom<QVal, Error = Error>>(
 
 fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target, Error> {
     let mut pass = Target {
+        forward_target: None,
         name: name.to_owned(),
         persistent: false,
         width: None,
@@ -417,6 +444,7 @@ fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target
 
     pass.height = seek::<u32>(slice, "height").transpose()?;
     pass.width = seek::<u32>(slice, "width").transpose()?;
+    pass.forward_target = seek::<String>(slice, "forward").transpose()?;
 
     pass.persistent = slice
         .iter()
