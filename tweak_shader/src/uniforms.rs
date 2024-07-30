@@ -64,6 +64,7 @@ pub enum Error {
     UnsupportedArrayType(String),
     InputTypeErr(String, &'static str),
     TypeCheck(String),
+    MissingTarget(Vec<String>),
     UtilityBlockType,
     UtilityBlockMissing(String),
     MultiplePushConstants,
@@ -73,6 +74,13 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Error::MissingTarget(target_names) => {
+                write!(
+                    f,
+                    "Inputs specified but no matching uniform found: {}",
+                    target_names.join(", ")
+                )
+            }
             Error::PushConstantOutSideOfBlock => {
                 write!(f, "Push constant was defined outside of a struct block.")
             }
@@ -99,7 +107,7 @@ impl fmt::Display for Error {
                 write!(f, "Error loading {binding}, uniforms with array dimensions are unsupported at this time.")
             }
             Error::InputTypeErr(var, expected) => {
-                write!(f, "Mismatched types found: {} -> {}", var, expected)
+                write!(f, "Mismatched types found: {}, expected {}", var, expected)
             }
             Error::TypeCheck(name) => {
                 write!(f, "Type check failed for input variable: '{}'", name)
@@ -128,26 +136,6 @@ struct VariableAddress {
     pub binding: usize,
 }
 
-#[derive(Debug, Clone)]
-pub struct Target {
-    doc_desc: parsing::Target,
-    format: wgpu::TextureFormat,
-}
-
-impl Target {
-    pub fn name(&self) -> &str {
-        &self.doc_desc.name
-    }
-
-    pub fn fmt(&self) -> &wgpu::TextureFormat {
-        &self.format
-    }
-
-    pub fn persistent(&self) -> bool {
-        self.doc_desc.persistent
-    }
-}
-
 #[derive(Debug)]
 pub struct Uniforms {
     lookup_table: BTreeMap<VarName, VariableAddress>,
@@ -155,7 +143,6 @@ pub struct Uniforms {
     utility_block_addr: Option<VariableAddress>,
     push_constants: Option<PushConstant>,
     sets: Vec<TweakBindGroup>,
-    targets: Vec<Target>,
     utility_block_data: GlobalData,
     place_holder_texture: wgpu::Texture,
     pass_indices: wgpu::Buffer,
@@ -206,7 +193,9 @@ impl Uniforms {
                             );
                         }
                     }
-                    BindingEntry::Texture { name, .. } | BindingEntry::Sampler { name, .. } => {
+                    BindingEntry::Texture { name, .. }
+                    | BindingEntry::Sampler { name, .. }
+                    | BindingEntry::StorageTexture { name, .. } => {
                         lookup_table.insert(
                             name.clone(),
                             VariableAddress {
@@ -247,6 +236,31 @@ impl Uniforms {
             Err(Error::MissingInput(missing_input))?;
         }
 
+        let missing_targets: Vec<_> = document
+            .targets
+            .iter()
+            .filter_map(|target| {
+                let found = sets.iter().find(|binding| {
+                    binding.binding_entries.iter().any(|entry| {
+                        if let BindingEntry::StorageTexture { name, .. } = entry {
+                            *name == target.name
+                        } else {
+                            false
+                        }
+                    })
+                });
+
+                match found {
+                    None => Some(target.name.clone()),
+                    Some(_) => None,
+                }
+            })
+            .collect();
+
+        if !missing_targets.is_empty() {
+            Err(Error::MissingTarget(missing_targets))?;
+        }
+
         let no_util_present = !sets.iter().any(|b| b.contains_util());
         let push_is_util = push_constants
             .as_ref()
@@ -282,35 +296,6 @@ impl Uniforms {
             }
         }
 
-        let mut targets = vec![];
-        for target in document.targets.iter() {
-            let fmt = sets
-                .iter()
-                .map(|e| e.binding_entries.iter())
-                .flatten()
-                .find_map(|bg_entry| match bg_entry {
-                    BindingEntry::Texture {
-                        tex: Some(tex),
-                        name,
-                        ..
-                    } => {
-                        if name == &target.name {
-                            Some(tex.format())
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                });
-
-            if let Some(format) = fmt {
-                targets.push(Target {
-                    doc_desc: target.clone(),
-                    format,
-                })
-            }
-        }
-
         let contents = (0..pass_count as u32).collect::<Vec<u32>>();
 
         // During the render pass we need to queue `copy_buffer_to_buffer`
@@ -323,7 +308,6 @@ impl Uniforms {
         });
 
         Ok(Self {
-            targets,
             pass_indices,
             push_constants,
             private_textures,
@@ -718,10 +702,6 @@ impl Uniforms {
         set.get_mut(name, addr)
     }
 
-    pub fn iter_targets(&self) -> impl Iterator<Item = &Target> {
-        self.targets.iter()
-    }
-
     pub fn iter_custom_uniforms_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
         let push = if let Some(PushConstant::Struct { inputs, .. }) = self.push_constants.as_mut() {
             Some(Box::new(inputs.iter_mut().map(|(k, v)| (k, v.into())))
@@ -869,7 +849,7 @@ impl GlobalData {
 pub enum Storage {
     Uniform,
     Push,
-    Storage(wgpu::StorageTextureAccess),
+    TextureAccess(wgpu::StorageTextureAccess),
 }
 
 #[derive(Debug)]
@@ -896,6 +876,17 @@ pub enum BindingEntry {
         // storage location
         storage: Storage,
     },
+    StorageTexture {
+        // the binding index , might not be contiguous
+        binding: u32,
+        // texture resource if not default
+        tex: Option<wgpu::Texture>,
+        view: Option<wgpu::TextureView>,
+        // variable name
+        name: String,
+        // storage location
+        storage: Storage,
+    },
     Texture {
         // the binding index , might not be contiguous
         binding: u32,
@@ -906,7 +897,7 @@ pub enum BindingEntry {
         input: InputType,
         // variable name
         name: String,
-        // storage location
+        // likely just uniform
         storage: Storage,
     },
     Sampler {
@@ -1034,6 +1025,7 @@ impl BindingEntry {
         match self {
             BindingEntry::UtilityUniformBlock { storage, .. }
             | BindingEntry::UniformBlock { storage, .. }
+            | BindingEntry::StorageTexture { storage, .. }
             | BindingEntry::Texture { storage, .. } => *storage,
             BindingEntry::Sampler { .. } => Storage::Uniform,
         }
@@ -1173,7 +1165,9 @@ impl TweakBindGroup {
             let storage = match uniform.space {
                 naga::AddressSpace::Uniform | naga::AddressSpace::Handle => Storage::Uniform,
                 naga::AddressSpace::PushConstant => Storage::Push,
-                naga::AddressSpace::Storage { access } => Storage::Storage(storage_access(&access)),
+                naga::AddressSpace::Storage { access } => {
+                    Storage::TextureAccess(storage_access(&access))
+                }
                 _ => continue,
             };
 
@@ -1215,52 +1209,56 @@ impl TweakBindGroup {
 
                     layout_entries.push(entry);
                 }
-
+                naga::TypeInner::Array { base, size, stride } => {
+                    todo!();
+                }
                 naga::TypeInner::Image {
                     dim,
                     arrayed,
                     class,
                 } => {
-                    let input = match document.inputs.get(uniform.name.as_ref().unwrap()) {
-                        Some(v) if v.is_stored_as_texture() => v.clone(),
-                        Some(v) => Err(Error::InputTypeErr(format!("{v}"), "image"))?,
-                        None => InputType::Image(crate::input_type::TextureStatus::Uninit),
-                    };
-
                     let entry = image_entry_from_naga(class, dim, *arrayed, binding, format);
 
-                    // create placeholder data
-                    let (tex, view) =
-                        if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
-                            let pixel_size = format.block_copy_size(None).unwrap();
+                    if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
+                        let pixel_size = format.block_copy_size(None).unwrap();
 
-                            let place_holder_texture = device.create_texture_with_data(
-                                queue,
-                                &storage_desc(1, 1, format),
-                                Default::default(),
-                                &vec![0; pixel_size as usize],
-                            );
+                        let place_holder_texture = device.create_texture_with_data(
+                            queue,
+                            &storage_desc(1, 1, format),
+                            Default::default(),
+                            &vec![0; pixel_size as usize],
+                        );
 
-                            let mut view_desc = DEFAULT_VIEW;
-                            view_desc.format = Some(format);
+                        let mut view_desc = DEFAULT_VIEW;
+                        view_desc.format = Some(format);
 
-                            let placeholder_view = place_holder_texture.create_view(&view_desc);
+                        let placeholder_view = place_holder_texture.create_view(&view_desc);
 
-                            (Some(place_holder_texture), Some(placeholder_view))
-                        } else {
-                            (None, None)
+                        binding_entries.push(BindingEntry::StorageTexture {
+                            binding,
+                            tex: Some(place_holder_texture),
+                            view: Some(placeholder_view),
+                            name: uniform.name.clone().unwrap_or_default(),
+                            storage,
+                        });
+                    } else {
+                        let input = match document.inputs.get(uniform.name.as_ref().unwrap()) {
+                            Some(v) if v.is_stored_as_texture() => v.clone(),
+                            Some(v) => Err(Error::InputTypeErr(format!("{v}"), "image"))?,
+                            None => InputType::Image(crate::input_type::TextureStatus::Uninit),
                         };
 
-                    layout_entries.push(entry);
+                        binding_entries.push(BindingEntry::Texture {
+                            binding,
+                            tex: None,
+                            view: None,
+                            name: uniform.name.clone().unwrap_or_default(),
+                            input: input.clone(),
+                            storage,
+                        });
+                    };
 
-                    binding_entries.push(BindingEntry::Texture {
-                        binding,
-                        tex,
-                        view,
-                        name: uniform.name.clone().unwrap_or_default(),
-                        input: input.clone(),
-                        storage,
-                    });
+                    layout_entries.push(entry);
                 }
                 naga::TypeInner::Sampler { .. } => {
                     let mut samp_desc = DEFAULT_SAMPLER;
@@ -1563,6 +1561,16 @@ impl TweakBindGroup {
                         binding: *binding,
                         resource: wgpu::BindingResource::Sampler(&*samp),
                     });
+                }
+                BindingEntry::StorageTexture { binding, view, .. } => {
+                    if let Some(view) = view {
+                        out.push(wgpu::BindGroupEntry {
+                            binding: *binding,
+                            resource: wgpu::BindingResource::TextureView(view),
+                        });
+                    } else {
+                        unreachable!("storage texture unitialized");
+                    };
                 }
             }
         }

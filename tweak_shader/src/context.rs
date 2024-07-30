@@ -23,23 +23,6 @@ pub struct RenderContext {
     stage: wgpu::naga::ShaderStage,
 }
 
-pub enum OutputView<'a> {
-    Single(&'a wgpu::TextureView),
-    Slice(&'a [(String, wgpu::TextureView)]),
-}
-
-impl<'a> Into<OutputView<'a>> for &'a wgpu::TextureView {
-    fn into(self) -> OutputView<'a> {
-        OutputView::Single(self)
-    }
-}
-
-impl<'a> Into<OutputView<'a>> for &'a [(String, wgpu::TextureView)] {
-    fn into(self) -> OutputView<'a> {
-        OutputView::Slice(self.as_ref())
-    }
-}
-
 #[derive(Debug)]
 enum Pipeline {
     Compute {
@@ -246,11 +229,6 @@ impl RenderContext {
         self.stage == ShaderStage::Compute
     }
 
-    /// Iterates over the current storage texture targets
-    pub fn iter_targets(&self) -> impl Iterator<Item = &uniforms::Target> {
-        self.uniforms.iter_targets()
-    }
-
     /// Renders the shader maintained by this context to the provided texture view.
     /// this will produce validation errors if the view format does not match the
     /// format the context was configured with in [RenderContext::new].
@@ -269,25 +247,15 @@ impl RenderContext {
 
     /// Encodes the renderpasses and buffer copies in the correct order into
     /// `command` encoder targeting `view`.
-    pub fn encode_render<'a, V>(
+    pub fn encode_render(
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        view: V,
+        view: &wgpu::TextureView,
         width: u32,
         height: u32,
-    ) where
-        V: Into<OutputView<'a>>,
-    {
-        let output_view: OutputView<'_> = view.into();
-
-        let view = match output_view {
-            OutputView::Single(v) => v,
-            OutputView::Slice(&[]) => return,
-            OutputView::Slice(_) => todo!(),
-        };
-
+    ) {
         // resize render targets and copy over texture contents for consistency
         self.update_pass_textures(command_encoder, device, width, height);
         // updates video, audio, streams, shows new images.

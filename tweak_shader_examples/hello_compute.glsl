@@ -3,7 +3,7 @@
 #pragma tweak_shader(version="1.0")
 #pragma stage(compute)
 
-#pragma target(0, name="output_image")
+#pragma target(name="output_image", screen)
 layout(rgba32f, set=0, binding=3) uniform writeonly image2D output_image;
 
 // You have access to these built in globals

@@ -752,7 +752,6 @@ fn compute_targets() {
     .unwrap();
 
     assert!(inputs_test.is_compute());
-    assert_eq!(2, inputs_test.iter_targets().count());
 }
 
 const NO_EXCESS: &str = r#"

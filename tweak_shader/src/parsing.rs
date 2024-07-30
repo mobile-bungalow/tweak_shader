@@ -118,7 +118,7 @@ impl fmt::Display for Error {
             }
 
             Error::InvalidTarget(pragma) => {
-                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <persistent>, <height=n>, <width=n>), found #pragma target{pragma}")
+                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <persistent>, <sreen>, <height=n>, <width=n>), found #pragma target{pragma}")
             }
             Error::InvalidBuffer(pragma) => {
                 write!(f, "Invalid buffer directive, must be of the form #pragma buffer(name='var_name', <persistent>, length=n), found #pragma target{pragma}")
@@ -186,6 +186,8 @@ pub struct Target {
     pub forward_target: Option<String>,
     // whether or not the buffer is cleared every render
     pub persistent: bool,
+    // one and only one target may specify
+    pub default_screen: bool,
     // a height, or the render height as default
     pub width: Option<u32>,
     // a width, or the render height as default
@@ -292,7 +294,7 @@ impl FromStr for Buffer {
         let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), rest @ ..] =
             list.as_slice()
         else {
-            return Err(Error::InvalidTarget(buffer.into()));
+            return Err(Error::InvalidBuffer(buffer.into()));
         };
 
         match (name_literal.as_str(), name, rest) {
@@ -300,7 +302,7 @@ impl FromStr for Buffer {
                 let buffer = create_buffer(name, rest)?;
                 Ok(buffer)
             }
-            _ => Err(Error::InvalidTarget(buffer.into())),
+            _ => Err(Error::InvalidBuffer(buffer.into())),
         }
     }
 }
@@ -488,6 +490,7 @@ fn create_buffer(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Buffer
 
 fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target, Error> {
     let mut pass = Target {
+        default_screen: false,
         forward_target: None,
         name: name.to_owned(),
         persistent: false,
@@ -498,6 +501,10 @@ fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target
     pass.height = seek::<u32>(slice, "height").transpose()?;
     pass.width = seek::<u32>(slice, "width").transpose()?;
     pass.forward_target = seek::<String>(slice, "forward").transpose()?;
+
+    pass.default_screen = slice
+        .iter()
+        .any(|(q, _)| matches!(q, QVal::Id(id) if id == "screen"));
 
     pass.persistent = slice
         .iter()

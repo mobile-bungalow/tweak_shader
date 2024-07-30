@@ -58,9 +58,7 @@ layout(location = 0) out vec4 out_color;
 
 float TAU = 6.28318530718;
 
-// get alpha from matte texture
-// assuming it's a luma matte
-float alpha(vec4 color) {
+float luma(vec4 color) {
   return 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
 }
 
@@ -99,7 +97,7 @@ void main()	{
                         length(vec2(grad_x.g, grad_y.g)),
                         length(vec2(grad_x.b, grad_y.b)), 0.0);
 
-       out_color = mix(vec4(uv.xy, 0.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0), step(alpha(mix(color, matte_r, skip_edge_detection)), edge_threshold));
+       out_color = mix(vec4(uv.xy, 0.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0), step(luma(mix(color, matte_r, skip_edge_detection)), edge_threshold));
 
   } else if (pass_index < 14 && pass_index >= 1) {
 
@@ -132,7 +130,7 @@ void main()	{
     // finish
     // this will be 0 if jump flood never touched it
     float is_in_radius = step(0.00001, length(dist.xy));
-    float dist_from_point = clamp(length(dist.xy - uv) - skip_edge_detection * alpha(matte_r), 0.0, 1.0);
+    float dist_from_point = clamp(length(dist.xy - uv) - skip_edge_detection * luma(matte_r), 0.0, 1.0);
 
     vec4 color = vec4(dist.rg, 0.0, 1.0);
 
