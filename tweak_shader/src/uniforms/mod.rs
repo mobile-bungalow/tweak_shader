@@ -9,8 +9,6 @@ use naga::{FastHashMap, FastHashSet, FastIndexMap};
 pub use naga_bridge::*;
 use wgpu::naga;
 
-use std::collections::BTreeSet;
-
 use bytemuck::*;
 use wgpu::{util::DeviceExt, BufferUsages};
 
@@ -674,16 +672,25 @@ impl Uniforms {
     }
 }
 
-pub fn sets(module: &naga::Module) -> BTreeSet<u32> {
-    let mut out = BTreeSet::new();
+pub fn sets(
+    module: &naga::Module,
+    document: &crate::parsing::Document,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: &wgpu::TextureFormat,
+) -> Result<Vec<TweakBindGroup>, Error> {
+    let max_set_index = module
+        .global_variables
+        .iter()
+        .filter_map(|(_, var)| var.binding.as_ref().map(|b| b.group))
+        .max()
+        .unwrap_or(0);
 
-    for (_, var) in module.global_variables.iter() {
-        if let Some(bind) = var.binding.as_ref() {
-            out.insert(bind.group);
-        }
-    }
-
-    out
+    // collect all set indices, find the max then create bind sets contiguous up to max.
+    // some might be empty.
+    (0..=max_set_index)
+        .map(|set| TweakBindGroup::new_from_naga(set, &module, &document, device, queue, &format))
+        .collect::<Result<_, _>>()
 }
 
 // CPU representation of the shadertoy-like bind group

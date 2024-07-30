@@ -340,7 +340,7 @@ pub fn work_groups_from_naga(module: &naga::Module) -> [u32; 3] {
         .entry_points
         .first()
         .map(|e| e.workgroup_size)
-        .expect("no entry point???")
+        .expect("no entry point.")
 }
 
 pub fn image_entry_from_naga(

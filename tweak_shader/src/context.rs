@@ -51,8 +51,7 @@ impl RenderContext {
     ) -> Result<Self, Error> {
         let source = source.as_ref();
 
-        let document =
-            crate::parsing::parse_document(source).map_err(Error::DocumentParsingFailed)?;
+        let document = crate::parsing::parse_document(source)?;
 
         let stripped_src: String = source
             .lines()
@@ -60,19 +59,18 @@ impl RenderContext {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut options = Options::from(document.stage);
+        let options = Options {
+            stage: document.stage,
+            defines: [("TWEAK_SHADER".to_owned(), "1".to_owned())]
+                .into_iter()
+                .collect(),
+        };
 
-        options
-            .defines
-            .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
-
-        let mut frontend = Frontend::default();
-
-        let naga_mod = frontend.parse(&options, &stripped_src).map_err(|e| {
-            Error::ShaderCompilationFailed(display_errors(&e.errors, &stripped_src))
-        })?;
-
-        let mut pass_structure = vec![];
+        let naga_mod = glsl::Frontend::default()
+            .parse(&options, &stripped_src)
+            .map_err(|e| {
+                Error::ShaderCompilationFailed(display_errors(&e.errors, &stripped_src))
+            })?;
 
         // internal passes should be HDR, they are often used
         // pass data around.
@@ -82,27 +80,17 @@ impl RenderContext {
             TextureFormat::Rgba16Uint
         };
 
-        pass_structure.extend(
-            document
-                .passes
-                .iter()
-                .map(|pass| RenderPass::new(pass, pass_texture)),
-        );
+        let pass_structure = document
+            .passes
+            .iter()
+            .map(|pass| RenderPass::new(pass, pass_texture))
+            .chain(std::iter::once(RenderPass::new(
+                &Default::default(),
+                format,
+            )))
+            .collect::<Vec<_>>();
 
-        pass_structure.push(RenderPass::new(&Default::default(), format));
-
-        // collect all set indices, find the max then create bind sets contiguous up to max.
-        // some might be empty.
-        let sets = uniforms::sets(&naga_mod);
-        let sets = sets.iter().map(|s| *s as i32).next_back().unwrap_or(-1);
-
-        let sets = (0..(sets + 1))
-            .map(|s| {
-                uniforms::TweakBindGroup::new_from_naga(
-                    s as u32, &naga_mod, &document, device, queue, &format,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let sets = uniforms::sets(&naga_mod, &document, device, queue, &format)?;
 
         // theres is only every 1 or 0 push constant blocks
         let push_const = uniforms::push_constant(&naga_mod, &document)?;
