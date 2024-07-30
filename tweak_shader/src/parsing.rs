@@ -201,7 +201,7 @@ impl FromStr for InputEntry {
                     let labels = labels?;
                     if let Some(values) = seek::<Vec<i32>>(rest, "values") {
                         let values = values?;
-                        Some(labels.into_iter().zip(values.into_iter()).collect())
+                        Some(labels.into_iter().zip(values).collect())
                     } else {
                         Err(Error::MalformedIntList(input.to_owned()))?
                     }

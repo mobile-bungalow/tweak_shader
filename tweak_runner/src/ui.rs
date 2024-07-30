@@ -277,23 +277,15 @@ fn file_selector(
             }
 
             if ui.button("X").clicked() {
-                match val.variant() {
-                    InputVariant::Image => {
-                        let _ = sender.send(RunnerMessage::UnloadImage {
-                            var: name.to_owned(),
-                        });
-                    }
-                    _ => {}
+                if val.variant() == InputVariant::Image {
+                    let _ = sender.send(RunnerMessage::UnloadImage {
+                        var: name.to_owned(),
+                    });
                 }
                 ui_state.current_loaded_files.remove(name);
             }
-        } else if ui.button("Select File").clicked() {
-            match val.variant() {
-                InputVariant::Image => {
-                    launch_image_or_video_dialog(sender, name.to_owned());
-                }
-                _ => {}
-            }
+        } else if ui.button("Select File").clicked() && val.variant() == InputVariant::Image {
+            launch_image_or_video_dialog(sender, name.to_owned());
         }
     });
 }
