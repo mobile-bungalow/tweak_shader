@@ -102,12 +102,10 @@ impl RenderContext {
                     s as u32, &naga_mod, &document, device, queue, &format,
                 )
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(crate::Error::UniformError)?;
+            .collect::<Result<Vec<_>, _>>()?;
 
         // theres is only every 1 or 0 push constant blocks
-        let push_const =
-            uniforms::push_constant(&naga_mod, &document).map_err(Error::UniformError)?;
+        let push_const = uniforms::push_constant(&naga_mod, &document)?;
 
         let uniforms = uniforms::Uniforms::new(
             &document,
@@ -117,8 +115,7 @@ impl RenderContext {
             sets,
             push_const,
             pass_structure.len(),
-        )
-        .map_err(Error::UniformError)?;
+        )?;
 
         let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
 
