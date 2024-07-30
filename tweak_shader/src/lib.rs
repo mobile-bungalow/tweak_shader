@@ -1,6 +1,6 @@
 //! # Lib Tweak Shader
 //!
-//! The Tweak Shader Library provides a rendering and bookkeeping context for an interactive screen shader format. It allows users to create shaders reminiscent of ShaderToy or ISF shaders with custom uniforms that can be tweaked at runtime. The library features support for video, image, and audio inputs, as well as various other types, including colors, floats, integers, 2D points, and more. The design and functionality of this library were inspired by the ISF (Interactive Shader Format) project.
+//! The Tweak Shader Library provides a rendering and bookkeeping context for an interactive screen shader format. It allows users to create shaders reminiscent of ShaderToy or ISF shaders with custom uniforms that can be tweaked at runtime. The library features support  image,  as well as various other types, including colors, floats, integers, 2D points, and more. The design and functionality of this library were inspired by the ISF (Interactive Shader Format) project.
 //!
 //! ## Usage
 //!
@@ -85,19 +85,6 @@
 //!layout(set=1, binding=2) uniform texture2D input_image;
 //! ```
 //!
-//! - Audio Input:
-//!
-//! ```glsl
-//! #pragma input(audio, name="audio_tex")
-//!layout(set=1, binding=3) uniform texture2D audio_tex;
-//! ```
-//!
-//! - AudioFFT Input:
-//!
-//! ```glsl
-//! #pragma input(audiofft, name="audio_fft_tex")
-//!layout(set=1, binding=4) uniform texture2D audio_fft_tex;
-//! ```
 //!
 //! Each input pragma corresponds to a uniform variable in the shader code, with the `name` field specifying the matching struct field in the global uniform value or the texture name that maps to the input.
 //!

@@ -217,8 +217,8 @@ impl Uniforms {
             .flat_map(|set| &set.binding_entries)
             .filter_map(|entry| extract!(entry, BindingEntry::Texture { ref name, ..} => name))
         {
-            let texture_not_in_doc = document.inputs.contains_key(tex);
-            if texture_not_in_doc {
+            let texture_in_doc = document.inputs.contains_key(tex);
+            if !texture_in_doc {
                 private_textures.insert(tex.clone());
             }
         }
@@ -379,11 +379,7 @@ impl Uniforms {
             return false;
         };
         if let Some(set) = self.sets.get_mut(addr.set) {
-            let out = set.unload_texture(addr);
-            if out {
-                set.needs_rebind = true;
-            }
-            out
+            set.unload_texture(addr)
         } else {
             false
         }
@@ -495,12 +491,9 @@ impl Uniforms {
         let Some(addr) = self.lookup_table.get(name) else {
             return false;
         };
+
         if let Some(set) = self.sets.get_mut(addr.set) {
-            let out = set.override_texture_view(height, width, addr, tex_view);
-            if out {
-                set.needs_rebind = true;
-            }
-            out
+            set.override_texture_view(height, width, addr, tex_view)
         } else {
             false
         }
@@ -518,11 +511,7 @@ impl Uniforms {
         };
 
         if let Some(set) = self.sets.get_mut(addr.set) {
-            let out = set.override_texture_view(height, width, addr, new_tex_view);
-            if out {
-                set.needs_rebind = true;
-            }
-            out
+            set.override_texture_view(height, width, addr, new_tex_view)
         } else {
             false
         }
@@ -1021,6 +1010,7 @@ impl TweakBindGroup {
             Some(BindingEntry::Texture {
                 tex, view, input, ..
             }) => {
+                self.needs_rebind = true;
                 *tex = None;
                 *view = None;
                 let status = match input {
@@ -1053,6 +1043,7 @@ impl TweakBindGroup {
                 };
                 *view = Some(new_view);
                 *status = TextureStatus::Loaded { width, height };
+                self.needs_rebind = true;
                 true
             }
             _ => false,
@@ -1078,6 +1069,7 @@ impl TweakBindGroup {
                     }
                 };
                 *status = TextureStatus::Loaded { width, height };
+                self.needs_rebind = true;
                 true
             }
             _ => false,

@@ -746,6 +746,7 @@ fn inputs_iter() {
         "pushmaxRange",
         "pushgain",
     ];
+
     let refs = inputs_test.iter_inputs_mut().collect::<Vec<_>>();
 
     for name in names {
