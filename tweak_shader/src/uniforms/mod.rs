@@ -1,21 +1,33 @@
 mod naga_bridge;
+mod validation;
 
 use crate::input_type::*;
 use crate::parsing::Document;
 
-use bytemuck::{checked::cast_slice, offset_of};
 use naga::{AddressSpace, ResourceBinding, StructMember};
+use naga::{FastHashMap, FastHashSet, FastIndexMap};
 pub use naga_bridge::*;
-use wgpu::naga::{self, FastHashMap, FastHashSet, FastIndexMap};
+use wgpu::naga;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use bytemuck::*;
 use wgpu::{util::DeviceExt, BufferUsages};
 
 use crate::VarName;
-use std::fmt;
+use thiserror::Error;
 use wgpu::{BindGroupLayout, ShaderStages};
+
+macro_rules! extract {
+    ($expression:expr, $(
+        $(|)? $( $pattern:pat_param )|+ $( if $guard: expr )? => $output:expr
+    ),+ $(,)?) => {
+        match $expression {
+            $($( $pattern )|+ $( if $guard )? => Some($output),)+
+            _ => None
+        }
+    }
+}
 
 const GLOBAL_EXAMPLES: &str = r#"
 #pragma utility_block(ShaderInputs)
@@ -57,78 +69,47 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
     array_layer_count: Some(1),
 };
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
+    #[error("A Naga Arena was missing a handle it said it had, this might be a Naga bug.")]
     Handle,
+
+    #[error("Only 2D Textures are supported at this time.")]
+    TextureDimension,
+
+    #[error("Inputs specified but no matching uniform found: {0:?}")]
     MissingInput(Vec<String>),
+
+    #[error("Unsupported uniform type: {0:?}")]
     UnsupportedUniformType(String),
+
+    #[error("Unsupported image dimension: {0:?}")]
     UnsupportedImageDim(String),
+
+    #[error("Error loading {0}, uniforms with array dimensions are unsupported at this time.")]
     UnsupportedArrayType(String),
-    InputTypeErr(String, &'static str),
+
+    #[error("Mismatched types found: {0}, expected {1}")]
+    InputTypeErr(String, String),
+
+    #[error("Type check failed for input variable: '{0}'")]
     TypeCheck(String),
+
+    #[error("Inputs specified but no matching uniform found: {0:?}")]
     MissingTarget(Vec<String>),
+
+    #[error("The utility block specified in the pragma does not match the expected layout. \n it should match this layout - \n {}", GLOBAL_EXAMPLES)]
     UtilityBlockType,
+
+    #[error("The utility block specified `{0}` does not exist")]
     UtilityBlockMissing(String),
+
+    #[error("Multiple uniforms declared as `push_constant`, there can only be one.")]
     MultiplePushConstants,
+
+    #[error("Push constant was defined outside of a struct block.")]
     PushConstantOutSideOfBlock,
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::MissingTarget(target_names) => {
-                write!(
-                    f,
-                    "Inputs specified but no matching uniform found: {}",
-                    target_names.join(", ")
-                )
-            }
-            Error::PushConstantOutSideOfBlock => {
-                write!(f, "Push constant was defined outside of a struct block.")
-            }
-            Error::MultiplePushConstants => write!(
-                f,
-                "Multiple uniforms declared as `push_constant`, there can only be one."
-            ),
-            Error::Handle => write!(
-                f,
-                "A Naga Arena was missing a handle it said it had, this might be a Naga bug."
-            ),
-            Error::MissingInput(vars) => write!(
-                f,
-                "Inputs specified but no matching uniform found: {}",
-                vars.join(", ")
-            ),
-            Error::UnsupportedUniformType(ty) => {
-                write!(f, "Unsupported uniform type: {:?}", ty)
-            }
-            Error::UnsupportedImageDim(dim) => {
-                write!(f, "Unsupported image dimension: {:?}", dim)
-            }
-            Error::UnsupportedArrayType(binding) => {
-                write!(f, "Error loading {binding}, uniforms with array dimensions are unsupported at this time.")
-            }
-            Error::InputTypeErr(var, expected) => {
-                write!(f, "Mismatched types found: {}, expected {}", var, expected)
-            }
-            Error::TypeCheck(name) => {
-                write!(f, "Type check failed for input variable: '{}'", name)
-            }
-            Error::UtilityBlockType => {
-                write!(
-                    f,
-                    "The utility block specified in the pragma does not match the expected layout. \n it should match this layout - \n {}", 
-                    GLOBAL_EXAMPLES
-                )
-            }
-            Error::UtilityBlockMissing(name) => {
-                write!(f, "The utility block specified `{}` does not exist", name)
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {}
 
 #[derive(Debug, Copy, Clone)]
 struct VariableAddress {
@@ -177,21 +158,11 @@ impl Uniforms {
         pass_count: usize,
     ) -> Result<Self, Error> {
         let mut lookup_table = FastHashMap::default();
-        let mut push_addr = None;
         let mut utility_block_addr = None;
 
         // Fill out lookup table
         for (set_idx, set) in sets.iter().enumerate() {
             for (binding_idx, binding) in set.binding_entries.iter().enumerate() {
-                if binding.storage() == Storage::Push {
-                    if push_addr.is_some() {
-                        return Err(Error::MultiplePushConstants);
-                    }
-                    push_addr = Some(VariableAddress {
-                        set: set_idx,
-                        binding: binding_idx,
-                    })
-                }
                 match binding {
                     BindingEntry::UtilityUniformBlock { .. } => {
                         utility_block_addr = Some(VariableAddress {
@@ -225,71 +196,6 @@ impl Uniforms {
             }
         }
 
-        // Look for input pragmas that are missing targets
-        let missing_input: Vec<_> = document
-            .inputs
-            .keys()
-            .filter(|key| {
-                let not_in_push_constants =
-                    if let Some(PushConstant::Struct { inputs, .. }) = &push_constants {
-                        !inputs.contains_key(*key)
-                    } else {
-                        true
-                    };
-
-                let not_in_uni = sets.iter().all(|binding| {
-                    lookup_table
-                        .get(*key)
-                        .map(|addr| binding.get(key, addr))
-                        .is_none()
-                });
-                not_in_push_constants && not_in_uni
-            })
-            .cloned()
-            .collect();
-
-        // error out early if a specified input does not exists
-        if !missing_input.is_empty() {
-            Err(Error::MissingInput(missing_input))?;
-        }
-
-        let missing_targets: Vec<_> = document
-            .targets
-            .iter()
-            .filter_map(|target| {
-                let found = sets.iter().find(|binding| {
-                    binding.binding_entries.iter().any(|entry| {
-                        if let BindingEntry::StorageTexture { name, .. } = entry {
-                            *name == target.name
-                        } else {
-                            false
-                        }
-                    })
-                });
-
-                match found {
-                    None => Some(target.name.clone()),
-                    Some(_) => None,
-                }
-            })
-            .collect();
-
-        if !missing_targets.is_empty() {
-            Err(Error::MissingTarget(missing_targets))?;
-        }
-
-        let no_util_present = !sets.iter().any(|b| b.contains_util());
-        let push_is_util = push_constants
-            .as_ref()
-            .is_some_and(|p| matches!(p, PushConstant::UtilityBlock { .. }));
-
-        // error out early a utility block was specified and not found
-        if document.utility_block_name.is_some() && no_util_present && !push_is_util {
-            Err(Error::UtilityBlockMissing(
-                document.utility_block_name.as_ref().unwrap().clone(),
-            ))?;
-        }
-
         let place_holder_texture = device.create_texture_with_data(
             queue,
             &txtr_desc(1, 1),
@@ -306,10 +212,14 @@ impl Uniforms {
             .filter_map(|pass| pass.target_texture.clone())
             .collect();
 
-        for (name, _) in lookup_table.iter() {
-            let texture_not_in_doc = document.inputs.get(name).is_none();
+        for tex in sets
+            .iter()
+            .flat_map(|set| &set.binding_entries)
+            .filter_map(|entry| extract!(entry, BindingEntry::Texture { ref name, ..} => name))
+        {
+            let texture_not_in_doc = document.inputs.contains_key(tex);
             if texture_not_in_doc {
-                private_textures.insert(name.to_owned());
+                private_textures.insert(tex.clone());
             }
         }
 
@@ -319,12 +229,12 @@ impl Uniforms {
         // calls in order to update the index in a predictable way. but only
         // to update the `pass_index` utility block member.
         let pass_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            contents: cast_slice(&contents),
+            contents: bytemuck::cast_slice(&contents),
             label: None,
             usage: BufferUsages::COPY_SRC,
         });
 
-        Ok(Self {
+        let out = Self {
             pass_indices,
             push_constants,
             private_textures,
@@ -334,7 +244,11 @@ impl Uniforms {
             format: *format,
             place_holder_texture,
             utility_block_data,
-        })
+        };
+
+        out.validate(document)?;
+
+        Ok(out)
     }
 
     // Copy this uniforms data into other - goes by name
@@ -823,45 +737,6 @@ pub struct GlobalData {
     pub pass_index: u32,
 }
 
-impl GlobalData {
-    pub fn matches_layout_naga(it: impl Iterator<Item = (naga::TypeInner, usize)>) -> bool {
-        let f32_ty = naga::TypeInner::Scalar(naga::Scalar {
-            width: 4,
-            kind: naga::ScalarKind::Float,
-        });
-        let u32_ty = naga::TypeInner::Scalar(naga::Scalar {
-            width: 4,
-            kind: naga::ScalarKind::Uint,
-        });
-
-        let vec4_ty = naga::TypeInner::Vector {
-            scalar: naga::Scalar {
-                kind: naga::ScalarKind::Float,
-                width: 4,
-            },
-            size: naga::VectorSize::Quad,
-        };
-        let vec3 = naga::TypeInner::Vector {
-            scalar: naga::Scalar {
-                kind: naga::ScalarKind::Float,
-                width: 4,
-            },
-            size: naga::VectorSize::Tri,
-        };
-        let self_iter = [
-            (f32_ty.clone(), offset_of!(GlobalData, time)),
-            (f32_ty.clone(), offset_of!(GlobalData, time_delta)),
-            (f32_ty.clone(), offset_of!(GlobalData, frame_rate)),
-            (u32_ty.clone(), offset_of!(GlobalData, frame)),
-            (vec4_ty.clone(), offset_of!(GlobalData, mouse)),
-            (vec4_ty.clone(), offset_of!(GlobalData, date)),
-            (vec3, offset_of!(GlobalData, resolution)),
-            (u32_ty.clone(), offset_of!(GlobalData, pass_index)),
-        ];
-        self_iter.iter().zip(it).all(|(a, b)| *a == b)
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Storage {
     Uniform,
@@ -897,8 +772,8 @@ pub enum BindingEntry {
         // the binding index , might not be contiguous
         binding: u32,
         // texture resource if not default
-        tex: Option<wgpu::Texture>,
-        view: Option<wgpu::TextureView>,
+        tex: wgpu::Texture,
+        view: wgpu::TextureView,
         // variable name
         name: String,
         // storage location
@@ -935,7 +810,7 @@ struct StructDescriptor<'a> {
 }
 
 impl BindingEntry {
-    fn new(
+    fn new_struct_entry(
         device: &wgpu::Device,
         module: &naga::Module,
         document: &crate::parsing::Document,
@@ -961,28 +836,26 @@ impl BindingEntry {
                 Some((ty.inner.clone(), offset))
             });
 
-            if crate::uniforms::GlobalData::matches_layout_naga(layout) {
-                let mut backing: crate::uniforms::GlobalData = bytemuck::Zeroable::zeroed();
-                backing.mouse = [0.0, 0.0, -0.0, -0.0];
+            crate::uniforms::GlobalData::validate(layout)?;
 
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: None,
-                    size: std::mem::size_of::<crate::uniforms::GlobalData>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
+            let mut backing: crate::uniforms::GlobalData = bytemuck::Zeroable::zeroed();
+            backing.mouse = [0.0, 0.0, -0.0, -0.0];
 
-                return Ok(Self::UtilityUniformBlock {
-                    binding,
-                    backing,
-                    buffer,
-                    storage,
-                });
-            } else {
-                Err(Error::UtilityBlockType)?
-            }
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: std::mem::size_of::<crate::uniforms::GlobalData>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            return Ok(Self::UtilityUniformBlock {
+                binding,
+                backing,
+                buffer,
+                storage,
+            });
         }
 
         let mut inputs = FastIndexMap::default();
@@ -995,11 +868,8 @@ impl BindingEntry {
                 .map_err(|_| Error::Handle)?;
 
             if let Some(var) = document.inputs.get(&name) {
-                if var.type_check_struct_member(&ty.inner) {
-                    inputs.insert(name, var.clone());
-                } else {
-                    Err(Error::TypeCheck(name.clone()))?
-                }
+                var.validate(&ty.inner)?;
+                inputs.insert(name, var.clone());
             } else {
                 let input = InputType::RawBytes(crate::input_type::RawBytes {
                     inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
@@ -1082,7 +952,7 @@ pub fn push_constant(
             .map_err(|_| Error::Handle)?;
 
         let naga::TypeInner::Struct { members, span } = &push_type.inner else {
-            Err(Error::MultiplePushConstants)?
+            Err(Error::PushConstantOutSideOfBlock)?
         };
 
         if document
@@ -1096,14 +966,12 @@ pub fn push_constant(
                 Some((ty.inner.clone(), offset))
             });
 
-            if crate::uniforms::GlobalData::matches_layout_naga(layout) {
-                let mut backing: crate::uniforms::GlobalData = bytemuck::Zeroable::zeroed();
-                backing.mouse = [0.0, 0.0, -0.0, -0.0];
+            crate::uniforms::GlobalData::validate(layout)?;
 
-                out = Some(PushConstant::UtilityBlock { backing });
-            } else {
-                Err(Error::UtilityBlockType)?
-            }
+            let mut backing: crate::uniforms::GlobalData = bytemuck::Zeroable::zeroed();
+            backing.mouse = [0.0, 0.0, -0.0, -0.0];
+
+            out = Some(PushConstant::UtilityBlock { backing });
         } else {
             let mut inputs: FastIndexMap<String, InputType> = Default::default();
 
@@ -1115,11 +983,8 @@ pub fn push_constant(
                     .map_err(|_| Error::Handle)?;
 
                 if let Some(var) = document.inputs.get(&name) {
-                    if var.type_check_struct_member(&ty.inner) {
-                        inputs.insert(name, var.clone());
-                    } else {
-                        Err(Error::TypeCheck(name.clone()))?
-                    }
+                    var.validate(&ty.inner)?;
+                    inputs.insert(name, var.clone());
                 } else {
                     let input = InputType::RawBytes(crate::input_type::RawBytes {
                         inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
@@ -1380,14 +1245,10 @@ impl TweakBindGroup {
                     });
                 }
                 BindingEntry::StorageTexture { binding, view, .. } => {
-                    if let Some(view) = view {
-                        out.push(wgpu::BindGroupEntry {
-                            binding: *binding,
-                            resource: wgpu::BindingResource::TextureView(view),
-                        });
-                    } else {
-                        unreachable!("storage texture unitialized");
-                    };
+                    out.push(wgpu::BindGroupEntry {
+                        binding: *binding,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    });
                 }
             }
         }

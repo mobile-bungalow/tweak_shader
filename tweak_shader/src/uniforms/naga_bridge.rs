@@ -57,7 +57,7 @@ impl TweakBindGroup {
                     return Err(Error::UnsupportedUniformType("Error loading uniform with an array type. We do not support uniform arrays at this time.".into()));
                 }
                 naga::TypeInner::Struct { members, span } => {
-                    let entry = BindingEntry::new(
+                    let entry = BindingEntry::new_struct_entry(
                         device,
                         module,
                         document,
@@ -93,7 +93,7 @@ impl TweakBindGroup {
                     arrayed,
                     class,
                 } => {
-                    let entry = image_entry_from_naga(class, dim, *arrayed, binding, format);
+                    let entry = image_entry_from_naga(class, dim, *arrayed, binding, format)?;
 
                     if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
                         let pixel_size = format.block_copy_size(None).unwrap();
@@ -112,15 +112,17 @@ impl TweakBindGroup {
 
                         binding_entries.push(BindingEntry::StorageTexture {
                             binding,
-                            tex: Some(place_holder_texture),
-                            view: Some(placeholder_view),
+                            tex: place_holder_texture,
+                            view: placeholder_view,
                             name: uniform.name.clone().unwrap_or_default(),
                             storage,
                         });
                     } else {
                         let input = match document.inputs.get(uniform.name.as_ref().unwrap()) {
                             Some(v) if v.is_stored_as_texture() => v.clone(),
-                            Some(v) => Err(Error::InputTypeErr(format!("{v}"), "image"))?,
+                            Some(v) => {
+                                Err(Error::InputTypeErr(format!("{v}"), "image".to_owned()))?
+                            }
                             None => InputType::Image(crate::input_type::TextureStatus::Uninit),
                         };
 
@@ -281,12 +283,10 @@ pub fn sample_kind(scalar: &naga::ScalarKind, format: &TextureFormat) -> wgpu::T
     }
 }
 
-pub fn image_dim(dim: &naga::ImageDimension) -> wgpu::TextureViewDimension {
+pub fn image_dim(dim: &naga::ImageDimension) -> Result<wgpu::TextureViewDimension, super::Error> {
     match dim {
-        naga::ImageDimension::D1 => wgpu::TextureViewDimension::D1,
-        naga::ImageDimension::D2 => wgpu::TextureViewDimension::D2,
-        naga::ImageDimension::D3 => wgpu::TextureViewDimension::D3,
-        naga::ImageDimension::Cube => wgpu::TextureViewDimension::Cube,
+        naga::ImageDimension::D2 => Ok(wgpu::TextureViewDimension::D2),
+        _ => Err(super::Error::TextureDimension),
     }
 }
 
@@ -349,14 +349,14 @@ pub fn image_entry_from_naga(
     arrayed: bool,
     binding: u32,
     format: &wgpu::TextureFormat,
-) -> wgpu::BindGroupLayoutEntry {
+) -> Result<wgpu::BindGroupLayoutEntry, super::Error> {
     // no support for texture arrays just yet
     let count = if arrayed { NonZeroU32::new(1) } else { None };
-    match class {
+    let out = match class {
         naga::ImageClass::Sampled { kind, multi } => wgpu::BindGroupLayoutEntry {
             ty: wgpu::BindingType::Texture {
                 sample_type: sample_kind(kind, format),
-                view_dimension: image_dim(dim),
+                view_dimension: image_dim(dim)?,
                 multisampled: *multi,
             },
             visibility: ShaderStages::all(),
@@ -366,7 +366,7 @@ pub fn image_entry_from_naga(
         naga::ImageClass::Depth { multi } => wgpu::BindGroupLayoutEntry {
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Depth,
-                view_dimension: image_dim(dim),
+                view_dimension: image_dim(dim)?,
                 multisampled: *multi,
             },
             visibility: ShaderStages::all(),
@@ -375,7 +375,7 @@ pub fn image_entry_from_naga(
         },
         naga::ImageClass::Storage { format, access } => wgpu::BindGroupLayoutEntry {
             ty: wgpu::BindingType::StorageTexture {
-                view_dimension: image_dim(dim),
+                view_dimension: image_dim(dim)?,
                 format: texture_fmt(format),
                 access: storage_access(access),
             },
@@ -383,5 +383,6 @@ pub fn image_entry_from_naga(
             count,
             visibility: ShaderStages::COMPUTE | ShaderStages::FRAGMENT,
         },
-    }
+    };
+    Ok(out)
 }

@@ -305,6 +305,48 @@ fn push_constants() {
     ));
 }
 
+const TOO_MANY_PUSH_CONSTANTS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+
+#pragma utility_block(ShaderInputs)
+layout(push_constant) uniform ShaderInputs {
+    float time;       
+    float time_delta; 
+    float frame_rate; 
+    uint frame_index;  
+    vec4 mouse;       
+    vec4 date;        
+    vec3 resolution;  
+    uint pass_index;   
+};
+
+layout(push_constant) uniform Doofus {
+    uint no;
+};
+
+layout(location = 0) out vec4 out_color; 
+
+void main()
+{
+    out_color = vec4(1.0, sin(time), 1.0, 1.0);
+}
+"#;
+
+#[test]
+fn too_many_push_constants() {
+    let (device, queue) = set_up_wgpu();
+    let basic = RenderContext::new(
+        TOO_MANY_PUSH_CONSTANTS,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    );
+
+    assert!(matches!(basic, Err(tweak_shader::Error::UniformError(_))))
+}
+
 const PERSISTENT_SRC: &str = r#"
 #version 450
 #pragma tweak_shader(version="1.0")

@@ -1,7 +1,6 @@
-use std::{collections::BTreeMap, str::FromStr};
-
 use crate::input_type::{InputType, ShaderBool, TextureStatus};
-use std::fmt;
+use std::{collections::BTreeMap, str::FromStr};
+use thiserror::Error;
 
 // In the future I would like to replace the parsing module with a more principled parser
 // for each pragma instead of the current adhoc version.
@@ -34,104 +33,61 @@ impl Default for Document {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
+    #[error("Unknown type in input directive: #pragma input{0} must be one of color, float, int, event, point, image, audio, audiofft, bool.")]
     UnknownType(String),
+
+    #[error("Malformed input directive in #pragma input{0}: must start with one of color, float, int, event, point, image, audio, audiofft, bool.")]
     MalformedInput(String),
+
+    #[error("Missing name in input directive: #pragma input{0}")]
     MissingName(String),
+
+    #[error("Invalid pass directive #pragma pass{0}: needs an index specifier as the first field, such as #pragma pass(1).")]
     InvalidPassDescriptor(String),
+
+    #[error("Invalid sampler directive #pragma sampler{0}: must be of the form #pragma sampler(name='foo', linear|nearest, <clamp|repeat|mirror>).")]
     InvalidSamplerDescriptor(String),
+
+    #[error("Invalid target directive, must be of the form #pragma target(name='var_name', <persistent>, <sreen>, <height=n>, <width=n>), found #pragma target{0}")]
     InvalidTarget(String),
+
+    #[error("Invalid buffer directive, must be of the form #pragma buffer(name='var_name', <persistent>, length=n), found #pragma target{0}")]
     InvalidBuffer(String),
+
+    #[error("Buffer directive missing length attribute.")]
     MissinBufferLength,
+
+    #[error("Multiple screen targets defined, only one target directive can use the screen keyword at a time.")]
     MultipleScreenTargets,
+
+    #[error("Invalid pass descriptor #pragma pass{0}: {1}")]
     MalformedPass(String, String),
+
+    #[error("Invalid Tweak Version directive: #pragma version{0}, must be #pragma version(version=<number>)")]
     InvalidVersion(String),
+
+    #[error("Error in input: {0}")]
     Parsing(String),
+
+    #[error("Utility block defined two or more times in the same document.")]
     MultipleUtilityBlocks,
+
+    #[error("Invalid utility block directive {0}: utility block should have one and only one argument, the utility block uniform name.")]
     MalformedUtilityBlock(String),
+
+    #[error("There must only be one stage spacifier of the form: #pragma stage('compute'|'fragment'), found #pragma stage{0}")]
     StageSpecifier(String),
+
+    #[error("Invalid Int Input {0}: List inputs must have a `values` and `labels` key of equal lengths.")]
     MalformedIntList(String),
+
+    #[error("Type Error: {0}")]
     UnexpectedType(String),
+
+    #[error("Error Parsing input directive {0}: {1}")]
     Input(String, String),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::Input(pragma, error) => {
-                write!(f, "Error Parsing input directive {pragma}: {error}")
-            }
-            Error::UnexpectedType(found) => {
-                write!(f, "Type Error: {found}")
-            }
-            Error::MalformedIntList(pragma) => {
-                write!(
-                    f,
-                    "Invalid Int Input {pragma}: List inputs must have a `values` and `labels` key of equal lengths."
-                )
-            }
-            Error::MalformedUtilityBlock(pragma) => {
-                write!(
-                    f,
-                    "Invalid utility block directive {pragma}: utility block should have one and only one argument, the utility block uniform name."
-                )
-            }
-            Error::MultipleUtilityBlocks => {
-                write!(
-                    f,
-                    "Utility block defined two or more times in the same document."
-                )
-            }
-            Error::InvalidVersion(pragma) => {
-                write!(f, "Invalid Tweak Version directive: #pragma version{pragma}, must be #pragma version(version=<number>)")
-            }
-            Error::UnknownType(pragma) => {
-                write!(f, "Unknown type in input directive: #pragma input{pragma} must be one of color, float, int, event, point, image, audio, audiofft, bool.")
-            }
-            Error::MalformedInput(pragma) => {
-                write!(f, "Malformed input directive in #pragma input{pragma}: must start with one of color, float, int, event, point, image, audio, audiofft, bool.")
-            }
-            Error::MissingName(pragma) => {
-                write!(f, "Missing name in input directive: #pragma input{pragma}")
-            }
-            Error::MalformedPass(pragma, e) => {
-                write!(f, "Invalid pass descriptor #pragma pass{pragma}: {e}")
-            }
-            Error::InvalidPassDescriptor(pragma) => {
-                write!(
-                    f,
-                    "Invalid pass directive #pragma pass{pragma}: needs an index specifier as the first field, such as #pragma pass(1)."
-                )
-            }
-            Error::InvalidSamplerDescriptor(pragma) => {
-                write!(
-                    f,
-                    "Invalid sampler directive #pragma sampler{pragma}: must be of the form #pragma sampler(name='foo', linear|nearest, <clamp|repeat|mirror>)."
-                )
-            }
-            Error::Parsing(msg) => {
-                write!(f, "Error in input: {msg}")
-            }
-            Error::StageSpecifier(pragma) => {
-                write!(f, "There must only be one stage spacifier of the form: #pragma stage('compute'|'fragment'), found #pragma stage{pragma}")
-            }
-
-            Error::InvalidTarget(pragma) => {
-                write!(f, "Invalid target directive, must be of the form #pragma target(name='var_name', <persistent>, <sreen>, <height=n>, <width=n>), found #pragma target{pragma}")
-            }
-            Error::InvalidBuffer(pragma) => {
-                write!(f, "Invalid buffer directive, must be of the form #pragma buffer(name='var_name', <persistent>, length=n), found #pragma target{pragma}")
-            }
-
-            Error::MissinBufferLength => {
-                write!(f, "Buffer directive missing length attribute.")
-            }
-            Error::MultipleScreenTargets => {
-                write!(f, "Multiple screen targets defined, only one target directive can use the screen keyword at a time.")
-            }
-        }
-    }
 }
 
 fn map_input_err(err: String, line: &str) -> Error {
@@ -392,7 +348,7 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
                     _ => {}
                 };
 
-                if !stage.next().is_none() {
+                if stage.next().is_some() {
                     Err(Error::StageSpecifier(rest.to_owned()))?;
                 }
             }

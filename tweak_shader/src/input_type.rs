@@ -1,7 +1,5 @@
 use crate::parsing::FromRanges;
 use bytemuck::*;
-use wgpu::naga;
-use wgpu::naga::{ScalarKind, TypeInner};
 
 // In the future we should remove a lot of this code by using "derive_more"
 
@@ -448,53 +446,6 @@ impl InputType {
             Self::Color(v) => bytes_of(&v.current),
             Self::RawBytes(v) => v.inner.as_slice(),
             _ => &[],
-        }
-    }
-
-    pub(crate) fn type_check_struct_member(&self, refl: &TypeInner) -> bool {
-        match self {
-            InputType::Float(_) => {
-                *refl
-                    == TypeInner::Scalar(naga::Scalar {
-                        kind: ScalarKind::Float,
-                        width: 4,
-                    })
-            }
-            InputType::Int(_, _) => {
-                *refl
-                    == TypeInner::Scalar(naga::Scalar {
-                        kind: ScalarKind::Sint,
-                        width: 4,
-                    })
-            }
-            InputType::Point(_) => {
-                *refl
-                    == TypeInner::Vector {
-                        scalar: naga::Scalar {
-                            kind: ScalarKind::Float,
-                            width: 4,
-                        },
-                        size: naga::VectorSize::Bi,
-                    }
-            }
-            InputType::Bool(_) => {
-                *refl
-                    == TypeInner::Scalar(naga::Scalar {
-                        kind: ScalarKind::Sint,
-                        width: 4,
-                    })
-            }
-            InputType::Color(_) => {
-                *refl
-                    == TypeInner::Vector {
-                        scalar: naga::Scalar {
-                            kind: ScalarKind::Float,
-                            width: 4,
-                        },
-                        size: naga::VectorSize::Quad,
-                    }
-            }
-            InputType::Image(_) | InputType::RawBytes(_) => unreachable!(),
         }
     }
 }

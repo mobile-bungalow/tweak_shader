@@ -296,7 +296,7 @@ impl RenderContext {
                 timestamp_writes: None,
             });
 
-            rpass.set_pipeline(&compute_pipeline);
+            rpass.set_pipeline(compute_pipeline);
 
             for (set, bind_group) in self.uniforms.iter_sets() {
                 rpass.set_bind_group(set, bind_group, &[]);
@@ -350,7 +350,7 @@ impl RenderContext {
                     depth_stencil_attachment: None,
                 });
 
-                rpass.set_pipeline(&float_pipeline);
+                rpass.set_pipeline(float_pipeline);
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }
@@ -375,7 +375,7 @@ impl RenderContext {
                     depth_stencil_attachment: None,
                 });
 
-                rpass.set_pipeline(&pipeline);
+                rpass.set_pipeline(pipeline);
 
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
@@ -1037,27 +1037,27 @@ impl BufferCache {
 // if a texture format is used as a shader color target,
 // this returns true if it requires a vec4 color output.
 fn is_floating_point_in_shader(format: &wgpu::TextureFormat) -> bool {
-    match format {
+    !matches!(
+        format,
         TextureFormat::R8Uint
-        | TextureFormat::R8Sint
-        | TextureFormat::R16Uint
-        | TextureFormat::R16Sint
-        | TextureFormat::Rg8Uint
-        | TextureFormat::Rg8Sint
-        | TextureFormat::Rg16Uint
-        | TextureFormat::Rg16Sint
-        | TextureFormat::Rgba8Uint
-        | TextureFormat::Rgba8Sint
-        | TextureFormat::Rgba16Uint
-        | TextureFormat::Rgba16Sint
-        | TextureFormat::R32Uint
-        | TextureFormat::R32Sint
-        | TextureFormat::Rg32Uint
-        | TextureFormat::Rg32Sint
-        | TextureFormat::Rgba32Uint
-        | TextureFormat::Rgba32Sint => false,
-        _ => true,
-    }
+            | TextureFormat::R8Sint
+            | TextureFormat::R16Uint
+            | TextureFormat::R16Sint
+            | TextureFormat::Rg8Uint
+            | TextureFormat::Rg8Sint
+            | TextureFormat::Rg16Uint
+            | TextureFormat::Rg16Sint
+            | TextureFormat::Rgba8Uint
+            | TextureFormat::Rgba8Sint
+            | TextureFormat::Rgba16Uint
+            | TextureFormat::Rgba16Sint
+            | TextureFormat::R32Uint
+            | TextureFormat::R32Sint
+            | TextureFormat::Rg32Uint
+            | TextureFormat::Rg32Sint
+            | TextureFormat::Rgba32Uint
+            | TextureFormat::Rgba32Sint
+    )
 }
 
 // template for input textures, copied to from the gpu render target
@@ -1153,7 +1153,7 @@ fn read_texture_contents_to_slice(
     encoder.copy_texture_to_buffer(
         cpu_buffer_cache.tex().as_image_copy(),
         wgpu::ImageCopyBuffer {
-            buffer: &cpu_buffer_cache.buf(),
+            buffer: cpu_buffer_cache.buf(),
             layout: wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(cpu_buffer_cache.stride as u32),
