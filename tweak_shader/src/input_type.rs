@@ -1,6 +1,17 @@
 use crate::parsing::FromRanges;
 use bytemuck::*;
 
+macro_rules! extract {
+    ($expression:expr, $(
+        $(|)? $( $pattern:pat_param )|+ $( if $guard: expr )? => $output:expr
+    ),+ $(,)?) => {
+        match $expression {
+            $($( $pattern )|+ $( if $guard )? => Some($output),)+
+            _ => None
+        }
+    }
+}
+
 // In the future we should remove a lot of this code by using "derive_more"
 
 /// RGBA 4 component color.
@@ -63,60 +74,37 @@ impl<'a> MutInput<'a> {
     /// if the variant is stored as a texture get the
     /// texture status
     pub fn texture_status(&mut self) -> Option<TextureStatus> {
-        match self.inner {
-            InputType::Image(s) => Some(*s),
-            _ => None,
-        }
+        extract!(self.inner, InputType::Image(i) => *i)
     }
 
     /// Returns a reference to the internal f32 if the input is a float
     /// and none otherwise
     pub fn as_float(&mut self) -> Option<&mut BoundedInput<f32>> {
-        if let InputType::Float(bounded_input) = self.inner {
-            Some(bounded_input)
-        } else {
-            None
-        }
+        extract!(self.inner, InputType::Float(i) => i)
     }
 
     /// Returns a reference to the internal i32 if the input is an int
     /// and none otherwise, includes and optional vec of labels for i32 values
     pub fn as_int(&mut self) -> Option<MutInputInt> {
-        if let InputType::Int(value, labels) = self.inner {
-            Some(MutInputInt { value, labels })
-        } else {
-            None
-        }
+        extract!(self.inner, InputType::Int(value, labels) => MutInputInt { value, labels})
     }
 
     /// Returns a reference to the internal point if the input is 2d point
     /// and none otherwise
     pub fn as_point(&mut self) -> Option<&mut BoundedInput<[f32; 2]>> {
-        if let InputType::Point(bounded_input) = self.inner {
-            Some(bounded_input)
-        } else {
-            None
-        }
+        extract!(self.inner, InputType::Point(i) => i)
     }
 
     /// Returns a reference to the internal bool if the input is bool
     /// and none otherwise
     pub fn as_bool(&mut self) -> Option<&mut DiscreteInput<ShaderBool>> {
-        if let InputType::Bool(unbound_input) = self.inner {
-            Some(unbound_input)
-        } else {
-            None
-        }
+        extract!(self.inner, InputType::Bool(i) => i)
     }
 
     /// Returns a reference to the internal color if the variant is a color
     /// and none otherwise
     pub fn as_color(&mut self) -> Option<&mut DiscreteInput<Color>> {
-        if let InputType::Color(unbound_input) = self.inner {
-            Some(unbound_input)
-        } else {
-            None
-        }
+        extract!(self.inner, InputType::Color(i) => i)
     }
 
     /// Returns a reference to a byte slice representing the

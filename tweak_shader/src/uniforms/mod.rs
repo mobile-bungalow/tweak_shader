@@ -443,65 +443,42 @@ impl Uniforms {
 
         // If a texture of identical dimension
         // exists: write to it. otherwise init a new texture with the data.
-        match (&status, wgpu_texture) {
-            (
-                TextureStatus::Loaded {
-                    width: w,
-                    height: h,
-                },
-                Some(tex),
-            ) if *h == height && *w == width && tex.format() == *format => {
-                let block_size = tex
-                    .format()
-                    .block_copy_size(Some(wgpu::TextureAspect::All))
-                    .expect(
-                        "It seems like you are trying to render to a Depth Stencil. Stop that.",
-                    );
-                queue.write_texture(
-                    tex.as_image_copy(),
-                    data,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: bytes_per_row.or(Some(width * block_size)),
-                        rows_per_image: None,
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                );
+        let texture = match (&status, wgpu_texture) {
+            (_, Some(texture))
+                if texture.height() == height
+                    && texture.width() == width
+                    && texture.format() == *format =>
+            {
+                texture
             }
             _ => {
                 let mut desc = txtr_desc(width, height);
                 desc.format = *format;
                 let tex = device.create_texture(&desc);
-
-                let block_size = tex
-                    .format()
-                    .block_copy_size(Some(wgpu::TextureAspect::All))
-                    .expect(
-                        "It seems like you are trying to render to a Depth Stencil. Stop that.",
-                    );
-
-                queue.write_texture(
-                    tex.as_image_copy(),
-                    data,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: bytes_per_row.or(Some(width * block_size)),
-                        rows_per_image: None,
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                );
-
                 self.set_texture(var_name, tex);
+                self.get_texture(var_name).unwrap()
             }
-        }
+        };
+
+        let block_size = texture
+            .format()
+            .block_copy_size(Some(wgpu::TextureAspect::All))
+            .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
+
+        queue.write_texture(
+            texture.as_image_copy(),
+            data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: bytes_per_row.or(Some(width * block_size)),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     pub fn global_data_mut(&mut self) -> &mut GlobalData {
@@ -725,7 +702,7 @@ pub fn sets(module: &naga::Module) -> BTreeSet<u32> {
 // keep that in mind when editing this structure
 // It also must be 64 byte aligned
 #[repr(C)]
-#[derive(Debug, PartialEq, PartialOrd, Clone, Copy, Pod, Zeroable, Default)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy, Pod, Zeroable)]
 pub struct GlobalData {
     pub time: f32,
     pub time_delta: f32,
@@ -735,6 +712,14 @@ pub struct GlobalData {
     pub date: [f32; 4],
     pub resolution: [f32; 3],
     pub pass_index: u32,
+}
+
+impl Default for GlobalData {
+    fn default() -> Self {
+        let mut out: Self = bytemuck::Zeroable::zeroed();
+        out.mouse = [0.0, 0.0, -0.0, -0.0];
+        out
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -836,10 +821,7 @@ impl BindingEntry {
                 Some((ty.inner.clone(), offset))
             });
 
-            crate::uniforms::GlobalData::validate(layout)?;
-
-            let mut backing: crate::uniforms::GlobalData = bytemuck::Zeroable::zeroed();
-            backing.mouse = [0.0, 0.0, -0.0, -0.0];
+            GlobalData::validate(layout)?;
 
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
@@ -852,7 +834,7 @@ impl BindingEntry {
 
             return Ok(Self::UtilityUniformBlock {
                 binding,
-                backing,
+                backing: Default::default(),
                 buffer,
                 storage,
             });
@@ -935,75 +917,75 @@ pub fn push_constant(
     module: &naga::Module,
     document: &crate::parsing::Document,
 ) -> Result<Option<PushConstant>, Error> {
-    let mut out = None;
+    let push_constants: Vec<_> = module
+        .global_variables
+        .iter()
+        .filter(|(_, var)| var.space == AddressSpace::PushConstant)
+        .collect();
 
-    for (_, push_constant) in module.global_variables.iter() {
-        if push_constant.space != AddressSpace::PushConstant {
-            continue;
+    let (_, push_constant) = match push_constants.as_slice() {
+        [one] => one,
+        [] => return Ok(None),
+        _ => {
+            return Err(Error::MultiplePushConstants);
         }
+    };
 
-        if out.is_some() {
-            Err(Error::MultiplePushConstants)?
-        }
+    let push_type = module
+        .types
+        .get_handle(push_constant.ty)
+        .map_err(|_| Error::Handle)?;
 
-        let push_type = module
-            .types
-            .get_handle(push_constant.ty)
-            .map_err(|_| Error::Handle)?;
+    let naga::TypeInner::Struct { members, span } = &push_type.inner else {
+        return Err(Error::PushConstantOutSideOfBlock);
+    };
 
-        let naga::TypeInner::Struct { members, span } = &push_type.inner else {
-            Err(Error::PushConstantOutSideOfBlock)?
-        };
+    if document
+        .utility_block_name
+        .as_ref()
+        .is_some_and(|util_name| *util_name == push_type.name.clone().unwrap_or_default())
+    {
+        let layout = members.iter().filter_map(|member| {
+            let ty = module.types.get_handle(member.ty).ok()?;
+            let offset = member.offset as usize;
+            Some((ty.inner.clone(), offset))
+        });
 
-        if document
-            .utility_block_name
-            .as_ref()
-            .is_some_and(|util_name| *util_name == push_type.name.clone().unwrap_or_default())
-        {
-            let layout = members.iter().filter_map(|member| {
-                let ty = module.types.get_handle(member.ty).ok()?;
-                let offset = member.offset as usize;
-                Some((ty.inner.clone(), offset))
-            });
+        GlobalData::validate(layout)?;
 
-            crate::uniforms::GlobalData::validate(layout)?;
+        Ok(Some(PushConstant::UtilityBlock {
+            backing: Default::default(),
+        }))
+    } else {
+        let mut inputs = FastIndexMap::default();
 
-            let mut backing: crate::uniforms::GlobalData = bytemuck::Zeroable::zeroed();
-            backing.mouse = [0.0, 0.0, -0.0, -0.0];
+        for member in members {
+            let name = member.name.clone().unwrap_or_default();
 
-            out = Some(PushConstant::UtilityBlock { backing });
-        } else {
-            let mut inputs: FastIndexMap<String, InputType> = Default::default();
+            let ty = module
+                .types
+                .get_handle(member.ty)
+                .map_err(|_| Error::Handle)?;
 
-            for member in members {
-                let name = member.name.clone().unwrap_or_default();
-                let ty = module
-                    .types
-                    .get_handle(member.ty)
-                    .map_err(|_| Error::Handle)?;
-
-                if let Some(var) = document.inputs.get(&name) {
-                    var.validate(&ty.inner)?;
-                    inputs.insert(name, var.clone());
-                } else {
-                    let input = InputType::RawBytes(crate::input_type::RawBytes {
-                        inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
-                    });
-                    inputs.insert(name.clone(), input.clone());
-                }
+            if let Some(var) = document.inputs.get(&name) {
+                var.validate(&ty.inner)?;
+                inputs.insert(name, var.clone());
+            } else {
+                let input = InputType::RawBytes(crate::input_type::RawBytes {
+                    inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
+                });
+                inputs.insert(name.clone(), input.clone());
             }
-
-            let align = wgpu::PUSH_CONSTANT_ALIGNMENT as usize;
-
-            out = Some(PushConstant::Struct {
-                backing: vec![0; *span as usize],
-                inputs,
-                align,
-            })
         }
-    }
 
-    Ok(out)
+        let align = wgpu::PUSH_CONSTANT_ALIGNMENT as usize;
+
+        Ok(Some(PushConstant::Struct {
+            backing: vec![0; *span as usize],
+            inputs,
+            align,
+        }))
+    }
 }
 
 #[derive(Debug)]
