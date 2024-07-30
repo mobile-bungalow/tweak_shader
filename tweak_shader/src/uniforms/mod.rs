@@ -93,7 +93,7 @@ pub enum Error {
     #[error("Type check failed for input variable: '{0}'")]
     TypeCheck(String),
 
-    #[error("Inputs specified but no matching uniform found: {0:?}")]
+    #[error("Target specified but no matching uniform found: {0:?}")]
     MissingTarget(Vec<String>),
 
     #[error("The utility block specified in the pragma does not match the expected layout. \n it should match this layout - \n {}", GLOBAL_EXAMPLES)]
@@ -221,11 +221,10 @@ impl Uniforms {
             }
         }
 
-        let contents = (0..pass_count as u32).collect::<Vec<u32>>();
-
         // During the render pass we need to queue `copy_buffer_to_buffer`
         // calls in order to update the index in a predictable way. but only
         // to update the `pass_index` utility block member.
+        let contents = (0..pass_count as u32).collect::<Vec<u32>>();
         let pass_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             contents: bytemuck::cast_slice(&contents),
             label: None,
@@ -244,7 +243,7 @@ impl Uniforms {
             utility_block_data,
         };
 
-        out.validate(document)?;
+        out.validate(document, format)?;
 
         Ok(out)
     }
@@ -759,6 +758,8 @@ pub enum BindingEntry {
         name: String,
         // storage location
         storage: Storage,
+        // can be copied to view
+        supports_screen: bool,
     },
     Texture {
         // the binding index , might not be contiguous

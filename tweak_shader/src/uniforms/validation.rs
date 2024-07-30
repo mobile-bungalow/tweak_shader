@@ -6,7 +6,7 @@ use wgpu::naga;
 use super::{BindingEntry, Error, GlobalData, PushConstant, Uniforms};
 
 impl Uniforms {
-    pub fn validate(&self, document: &Document) -> Result<(), Error> {
+    pub fn validate(&self, document: &Document, format: &wgpu::TextureFormat) -> Result<(), Error> {
         // Look for input pragmas that are missing bindings
         let missing_input: Vec<_> = document
             .inputs
@@ -58,8 +58,34 @@ impl Uniforms {
             .collect();
 
         if !missing_targets.is_empty() {
-            Err(Error::MissingTarget(missing_targets))?;
+            Err(Error::MissingInput(missing_targets))?;
         }
+
+        let screen_output_format_mismatch: Vec<_> = document
+            .targets
+            .iter()
+            .filter_map(|target| {
+                let found = self.sets.iter().find(|binding| {
+                    binding.binding_entries.iter().any(|entry| {
+                        if let BindingEntry::StorageTexture {
+                            tex,
+                            supports_screen: true,
+                            ..
+                        } = entry
+                        {
+                            &tex.format() != format
+                        } else {
+                            false
+                        }
+                    })
+                });
+
+                match found {
+                    None => Some(target.name.clone()),
+                    Some(_) => None,
+                }
+            })
+            .collect();
 
         let no_util_present = !self.sets.iter().any(|b| b.contains_util());
         let push_is_util = self

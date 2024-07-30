@@ -3,10 +3,7 @@ use crate::uniforms;
 use naga::front::glsl;
 use wgpu::naga;
 
-use naga::{
-    front::glsl::{Frontend, Options},
-    ShaderStage,
-};
+use naga::{front::glsl::Options, ShaderStage};
 
 use crate::Error;
 
@@ -406,24 +403,39 @@ impl RenderContext {
                         set.insert(tex_name.clone());
                     }
 
-                    let size = height
-                        * width
-                        * pass
-                            .target_format
-                            .block_copy_size(Some(wgpu::TextureAspect::All))
-                            .unwrap_or(4);
+                    if device.features().contains(wgpu::Features::CLEAR_TEXTURE) {
+                        if let Some(tex) = self.uniforms.get_texture(tex_name) {
+                            command_encoder.clear_texture(
+                                tex,
+                                &wgpu::ImageSubresourceRange {
+                                    aspect: wgpu::TextureAspect::All,
+                                    base_mip_level: 0,
+                                    mip_level_count: None,
+                                    base_array_layer: 0,
+                                    array_layer_count: None,
+                                },
+                            );
+                        }
+                    } else {
+                        let size = height
+                            * width
+                            * pass
+                                .target_format
+                                .block_copy_size(Some(wgpu::TextureAspect::All))
+                                .unwrap_or(4);
 
-                    let slice = &vec![0; size as usize];
-                    self.uniforms.load_texture(
-                        tex_name,
-                        slice,
-                        height,
-                        width,
-                        None,
-                        &pass.target_format,
-                        device,
-                        queue,
-                    );
+                        let slice = &vec![0; size as usize];
+                        self.uniforms.load_texture(
+                            tex_name,
+                            slice,
+                            height,
+                            width,
+                            None,
+                            &pass.target_format,
+                            device,
+                            queue,
+                        );
+                    }
                 }
             }
         }

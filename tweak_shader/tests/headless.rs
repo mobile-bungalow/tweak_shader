@@ -973,7 +973,8 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
                 &wgpu::DeviceDescriptor {
                     label: None,
                     required_features: wgpu::Features::PUSH_CONSTANTS
-                        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                        | wgpu::Features::CLEAR_TEXTURE,
                     required_limits,
                 },
                 None,

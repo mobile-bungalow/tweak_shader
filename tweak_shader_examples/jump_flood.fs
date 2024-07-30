@@ -51,6 +51,8 @@ layout(set=1, binding=0) uniform custom_inputs {
 #pragma pass(13, target="distance_field")
 layout(set=0, binding=1) uniform sampler default_sampler;
 layout(set=0, binding=2) uniform texture2D distance_field;
+
+#pragma input(image, name="image")
 layout(set=0, binding=3) uniform texture2D image;
 
 

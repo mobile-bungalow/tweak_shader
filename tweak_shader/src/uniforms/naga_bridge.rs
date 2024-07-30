@@ -112,6 +112,7 @@ impl TweakBindGroup {
 
                         binding_entries.push(BindingEntry::StorageTexture {
                             binding,
+                            supports_screen: todo!(),
                             tex: place_holder_texture,
                             view: placeholder_view,
                             name: uniform.name.clone().unwrap_or_default(),
