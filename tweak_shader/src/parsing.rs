@@ -142,8 +142,8 @@ pub struct Target {
     pub forward_target: Option<String>,
     // whether or not the buffer is cleared every render
     pub persistent: bool,
-    // one and only one target may specify
-    pub default_screen: bool,
+    // true if this texture supports writing to the output view.
+    pub supports_screen: bool,
     // a height, or the render height as default
     pub width: Option<u32>,
     // a width, or the render height as default
@@ -446,7 +446,7 @@ fn create_buffer(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Buffer
 
 fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target, Error> {
     let mut pass = Target {
-        default_screen: false,
+        supports_screen: false,
         forward_target: None,
         name: name.to_owned(),
         persistent: false,
@@ -458,7 +458,7 @@ fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target
     pass.width = seek::<u32>(slice, "width").transpose()?;
     pass.forward_target = seek::<String>(slice, "forward").transpose()?;
 
-    pass.default_screen = slice
+    pass.supports_screen = slice
         .iter()
         .any(|(q, _)| matches!(q, QVal::Id(id) if id == "screen"));
 

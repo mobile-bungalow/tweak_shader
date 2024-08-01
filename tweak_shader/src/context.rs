@@ -1,6 +1,7 @@
 use crate::input_type::*;
 use crate::uniforms;
 use naga::front::glsl;
+use std::sync::Arc;
 use wgpu::naga;
 
 use naga::{front::glsl::Options, ShaderStage};
@@ -218,7 +219,7 @@ impl RenderContext {
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
-        view: &wgpu::TextureView,
+        view: &wgpu::Texture,
         width: u32,
         height: u32,
     ) {
@@ -234,7 +235,7 @@ impl RenderContext {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        tex: &wgpu::Texture,
         width: u32,
         height: u32,
     ) {
@@ -247,10 +248,11 @@ impl RenderContext {
 
         match &self.pipeline {
             Pipeline::Compute { .. } => {
-                self.encode_compute_render(queue, device, command_encoder, view, width, height);
+                self.encode_compute_render(queue, device, command_encoder, tex, width, height);
             }
             Pipeline::Pixel { .. } => {
-                self.encode_pixel_render(queue, device, command_encoder, view, width, height);
+                let view = tex.create_view(&Default::default());
+                self.encode_pixel_render(queue, device, command_encoder, &view, width, height);
             }
         }
     }
@@ -260,7 +262,7 @@ impl RenderContext {
         _queue: &wgpu::Queue,
         _device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        _view: &wgpu::TextureView,
+        _tex: &wgpu::Texture,
         _width: u32,
         _height: u32,
     ) {
@@ -644,10 +646,7 @@ impl RenderContext {
             self.screen_buffer_cache = BufferCache::new(&fmt, width, height, None, device);
         };
 
-        let view = self
-            .screen_buffer_cache
-            .tex()
-            .create_view(&Default::default());
+        let view = self.screen_buffer_cache.tex();
 
         self.render(queue, device, &view, width, height);
 
@@ -694,10 +693,7 @@ impl RenderContext {
                 BufferCache::new(&fmt, width, height, stride.map(|s| s as usize), device);
         };
 
-        let view = self
-            .screen_buffer_cache
-            .tex()
-            .create_view(&Default::default());
+        let view = self.screen_buffer_cache.tex();
 
         self.render(queue, device, &view, width, height);
 
@@ -969,7 +965,7 @@ impl RenderPass {
 
 #[derive(Debug)]
 struct BufferCache {
-    tex: wgpu::Texture,
+    tex: Arc<wgpu::Texture>,
     /// 256 byte aligned buffer
     buf: wgpu::Buffer,
     stride: usize,
@@ -999,7 +995,11 @@ impl BufferCache {
 
         let tex = device.create_texture(&target_desc(width, height, *format));
 
-        Self { buf, tex, stride }
+        Self {
+            buf,
+            tex: Arc::new(tex),
+            stride,
+        }
     }
 
     //TODO: allow using subsections of the buffer and texture through views
@@ -1022,8 +1022,8 @@ impl BufferCache {
             && stride_matches
     }
 
-    pub fn tex(&self) -> &wgpu::Texture {
-        &self.tex
+    pub fn tex(&self) -> Arc<wgpu::Texture> {
+        self.tex.clone()
     }
 
     pub fn buf(&self) -> &wgpu::Buffer {

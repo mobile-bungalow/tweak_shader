@@ -1,5 +1,4 @@
 use app::{App, RunnerMessage};
-use egui_wgpu::wgpu;
 use egui_winit::winit::event::{ElementState, KeyEvent, MouseButton};
 use egui_winit::winit::keyboard::{Key, NamedKey};
 use egui_winit::winit::{
@@ -137,11 +136,7 @@ fn main() {
                                 .get_current_texture()
                                 .expect("Failed to acquire next swap chain texture");
 
-                            let view = frame
-                                .texture
-                                .create_view(&wgpu::TextureViewDescriptor::default());
-
-                            app.render(&wgpu_device, &wgpu_queue, &view, &window);
+                            app.render(&wgpu_device, &wgpu_queue, &frame.texture, &window);
                             app.queue_message(RunnerMessage::RenderFinished);
 
                             frame.present();

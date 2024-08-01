@@ -341,51 +341,31 @@ pub trait TryAsMut<T> {
 
 impl TryAsMut<f32> for InputType {
     fn try_as_mut(&mut self) -> Option<&mut f32> {
-        if let InputType::Float(f) = self {
-            Some(&mut f.current)
-        } else {
-            None
-        }
+        extract!(self, InputType::Float(f) => &mut f.current)
     }
 }
 
 impl TryAsMut<i32> for InputType {
     fn try_as_mut(&mut self) -> Option<&mut i32> {
-        if let InputType::Int(i, _) = self {
-            Some(&mut i.current)
-        } else {
-            None
-        }
+        extract!(self, InputType::Int(i, _) => &mut i.current)
     }
 }
 
 impl TryAsMut<[f32; 2]> for InputType {
     fn try_as_mut(&mut self) -> Option<&mut [f32; 2]> {
-        if let InputType::Point(p) = self {
-            Some(&mut p.current)
-        } else {
-            None
-        }
+        extract!(self, InputType::Point(p) => &mut p.current)
     }
 }
 
 impl TryAsMut<ShaderBool> for InputType {
     fn try_as_mut(&mut self) -> Option<&mut ShaderBool> {
-        if let InputType::Bool(c) = self {
-            Some(&mut c.current)
-        } else {
-            None
-        }
+        extract!(self, InputType::Bool(b) => &mut b.current)
     }
 }
 
 impl TryAsMut<Color> for InputType {
     fn try_as_mut(&mut self) -> Option<&mut Color> {
-        if let InputType::Color(c) = self {
-            Some(&mut c.current)
-        } else {
-            None
-        }
+        extract!(self, InputType::Color(c) => &mut c.current)
     }
 }
 

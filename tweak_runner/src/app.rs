@@ -76,7 +76,7 @@ pub(crate) struct App {
     // Contains the render context
     status: AppStatus,
     // the target texture for the main context
-    output_texture: wgpu::Texture,
+    output_texture: std::sync::Arc<wgpu::Texture>,
     // We build the new ctx here before moving it into current_isf_ctx
     temp_isf_ctx: Cell<Option<Result<RenderContext, RunnerError>>>,
     // Videos that are being polled tracked by variable name
@@ -188,7 +188,7 @@ impl App {
         let last_frame = std::time::Instant::now();
         Ok(Self {
             must_update_render_targets: false,
-            output_texture,
+            output_texture: output_texture.into(),
             letter_box,
             messages,
             video_streams: BTreeMap::new(),
@@ -264,7 +264,7 @@ impl App {
         &mut self,
         wgpu_device: &wgpu::Device,
         wgpu_queue: &wgpu::Queue,
-        wgpu_view: &wgpu::TextureView,
+        wgpu_view: &wgpu::Texture,
         window: &egui_winit::winit::window::Window,
     ) {
         let mut wgpu_encoder =
@@ -288,8 +288,6 @@ impl App {
             if let Some([_, _]) = self.ui_state.options.lock_aspect_ratio {
                 let h = self.output_texture.height();
                 let w = self.output_texture.width();
-                //TODO: cache view
-                let out_tex = self.output_texture.create_view(&Default::default());
 
                 self.update_letterbox(w, h, size.width, size.height)
                     .unwrap();
@@ -297,12 +295,13 @@ impl App {
                 self.current_shader_mut()
                     .update_resolution([w as f32, h as f32]);
 
+                let out = self.output_texture.clone();
                 self.current_shader_mut().encode_render(
                     wgpu_queue,
                     wgpu_device,
                     &mut wgpu_encoder,
                     // this texture was shared with `letter_box`  in init
-                    &out_tex,
+                    &out,
                     w,
                     h,
                 );
@@ -427,10 +426,11 @@ impl App {
         );
 
         {
+            let view = &wgpu_view.create_view(&wgpu::TextureViewDescriptor::default());
             let mut render_pass = wgpu_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Gui"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: wgpu_view,
+                    view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -485,7 +485,7 @@ impl App {
             self.letter_box
                 .load_shared_texture(&output_texture, "image");
 
-            self.output_texture = output_texture;
+            self.output_texture = output_texture.into();
         }
     }
 

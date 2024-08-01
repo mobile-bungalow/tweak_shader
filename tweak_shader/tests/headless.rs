@@ -114,13 +114,7 @@ fn basic_frag_target_tex() {
 
     basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
 
-    basic.render(
-        &queue,
-        &device,
-        &out_tex.create_view(&Default::default()),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    basic.render(&queue, &device, &out_tex, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
     let mut time_0_bytes = vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4_usize];
 
@@ -141,13 +135,7 @@ fn basic_frag_target_tex() {
 
     basic.update_time(1.0);
 
-    basic.render(
-        &queue,
-        &device,
-        &out_tex.create_view(&Default::default()),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    basic.render(&queue, &device, &out_tex, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
     read_texture_contents_to_slice(
         &device,
@@ -769,11 +757,11 @@ const COMPUTE_TARGETS: &str = r#"
 
 layout(set=0, binding=1) uniform sampler default_sampler;
 
-#pragma target(name=output_image)
-layout(rgba32f, set=0, binding=2) uniform writeonly image2D output_image;
+#pragma target(name=output_image, screen)
+layout(rgba8, set=0, binding=2) uniform writeonly image2D output_image;
 
 #pragma target(name=scratch_buffer, persistent)
-layout(rgba32f, set=0, binding=3) uniform writeonly image2D scratch_buffer;
+layout(rgba8, set=0, binding=3) uniform writeonly image2D scratch_buffer;
 
 
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -795,6 +783,15 @@ fn compute_targets() {
     .unwrap();
 
     assert!(inputs_test.is_compute());
+
+    let inputs_test = RenderContext::new(
+        COMPUTE_TARGETS,
+        wgpu::TextureFormat::Rgba16Float,
+        &device,
+        &queue,
+    );
+
+    assert!(inputs_test.is_err());
 }
 
 const NO_EXCESS: &str = r#"
@@ -924,7 +921,6 @@ fn letterboxed_shrimple_texture_load() {
 
     let mut desc = DEFAULT_VIEW;
     desc.format = Some(shared_tex.format());
-    let tex_view = shared_tex.create_view(&desc);
 
     if !letterbox.load_shared_texture(&shared_tex, "image") {
         panic!("Texture Missing!");
@@ -934,7 +930,13 @@ fn letterboxed_shrimple_texture_load() {
         panic!("Texture FOUND?");
     }
 
-    tx_load.render(&queue, &device, &tex_view, TEST_RENDER_DIM, TEST_RENDER_DIM);
+    tx_load.render(
+        &queue,
+        &device,
+        &shared_tex,
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
 
     let out = letterbox.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
     //write_texture_to_png(out.as_slice(), "letterbox.png").unwrap();

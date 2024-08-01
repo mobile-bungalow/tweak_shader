@@ -78,6 +78,9 @@ pub enum Error {
     #[error("Inputs specified but no matching uniform found: {0:?}")]
     MissingInput(Vec<String>),
 
+    #[error("Targets found with the `screen` attribute that do not have a copy compatible format with the output texture: {0:?}, must be: {1:?}")]
+    TargetFormatMismatch(Vec<(wgpu::TextureFormat, String)>, wgpu::TextureFormat),
+
     #[error("Unsupported uniform type: {0:?}")]
     UnsupportedUniformType(String),
 

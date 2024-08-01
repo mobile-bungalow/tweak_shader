@@ -110,9 +110,16 @@ impl TweakBindGroup {
 
                         let placeholder_view = place_holder_texture.create_view(&view_desc);
 
+                        let maybe_target = document
+                            .targets
+                            .iter()
+                            .find(|t| Some(&t.name) == uniform.name.as_ref());
+
                         binding_entries.push(BindingEntry::StorageTexture {
                             binding,
-                            supports_screen: todo!(),
+                            supports_screen: maybe_target
+                                .map(|t| t.supports_screen)
+                                .unwrap_or_default(),
                             tex: place_holder_texture,
                             view: placeholder_view,
                             name: uniform.name.clone().unwrap_or_default(),

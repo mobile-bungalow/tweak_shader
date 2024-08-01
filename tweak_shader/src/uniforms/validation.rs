@@ -58,34 +58,36 @@ impl Uniforms {
             .collect();
 
         if !missing_targets.is_empty() {
-            Err(Error::MissingInput(missing_targets))?;
+            Err(Error::MissingTarget(missing_targets))?;
         }
 
-        let screen_output_format_mismatch: Vec<_> = document
-            .targets
+        let mismatch_target_textures: Vec<_> = self
+            .sets
             .iter()
-            .filter_map(|target| {
-                let found = self.sets.iter().find(|binding| {
-                    binding.binding_entries.iter().any(|entry| {
-                        if let BindingEntry::StorageTexture {
-                            tex,
-                            supports_screen: true,
-                            ..
-                        } = entry
-                        {
-                            &tex.format() != format
-                        } else {
-                            false
-                        }
-                    })
-                });
-
-                match found {
-                    None => Some(target.name.clone()),
-                    Some(_) => None,
+            .map(|binding| binding.binding_entries.iter())
+            .flatten()
+            .filter_map(|b| {
+                if let BindingEntry::StorageTexture {
+                    tex,
+                    supports_screen: true,
+                    name,
+                    ..
+                } = b
+                {
+                    Some((tex.format().remove_srgb_suffix(), name.clone()))
+                } else {
+                    None
                 }
             })
+            .filter(|(fmt, _name)| *fmt != format.remove_srgb_suffix())
             .collect();
+
+        if !mismatch_target_textures.is_empty() {
+            Err(Error::TargetFormatMismatch(
+                mismatch_target_textures,
+                format.clone(),
+            ))?;
+        }
 
         let no_util_present = !self.sets.iter().any(|b| b.contains_util());
         let push_is_util = self

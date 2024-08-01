@@ -6,6 +6,9 @@
 #pragma target(name="output_image", screen)
 layout(rgba32f, set=0, binding=3) uniform writeonly image2D output_image;
 
+#pragma target(name="input_image")
+layout(set=0, binding=2) uniform texture2D input_image;
+
 // You have access to these built in globals
 //in uvec3 gl_NumWorkGroups;
 //in uvec3 gl_WorkGroupID;
