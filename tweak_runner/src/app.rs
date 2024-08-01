@@ -301,7 +301,7 @@ impl App {
                     wgpu_device,
                     &mut wgpu_encoder,
                     // this texture was shared with `letter_box`  in init
-                    &out,
+                    &*out,
                     w,
                     h,
                 );

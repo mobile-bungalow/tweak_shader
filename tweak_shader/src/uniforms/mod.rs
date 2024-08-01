@@ -1,6 +1,7 @@
 mod naga_bridge;
 mod validation;
 
+use crate::context::Targets;
 use crate::input_type::*;
 use crate::parsing::Document;
 
@@ -25,6 +26,12 @@ macro_rules! extract {
             _ => None
         }
     }
+}
+
+pub struct TargetDescriptor<'a> {
+    pub persistent: bool,
+    pub name: &'a str,
+    pub format: wgpu::TextureFormat,
 }
 
 const GLOBAL_EXAMPLES: &str = r#"
@@ -368,6 +375,49 @@ impl Uniforms {
         for set in self.sets.iter_mut() {
             set.update_uniforms(device, queue, &self.place_holder_texture);
         }
+    }
+
+    // replace the views in the storage textures with those
+    // proved by the target set.
+    pub fn map_target_views<'a>(&mut self, targets: &Targets<'a>) {
+        match targets {
+            Targets::One(_) => {
+                todo!("map the one to the current default screen slot")
+            }
+            Targets::Many(_) => {
+                todo!("map the many to the proper target slots")
+            }
+        };
+    }
+
+    // replace the views in the storage textures with those
+    // of the textures they used before they were replaced
+    // during the last map_target_views call
+    pub fn reset_target_views(&mut self) {
+        todo!();
+    }
+
+    // zero the textures of any targets
+    // that are not labeled as persistent
+    pub fn clear_ephemeral_targets(&mut self) {
+        todo!();
+    }
+
+    pub fn iter_targets<'a>(&'a self) -> impl Iterator<Item = TargetDescriptor<'a>> {
+        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+        groups.filter_map(|group| match group {
+            BindingEntry::StorageTexture {
+                name,
+                tex,
+                persistent,
+                ..
+            } => Some(TargetDescriptor {
+                persistent: *persistent,
+                name,
+                format: tex.format(),
+            }),
+            _ => None,
+        })
     }
 
     pub fn unload_texture(&mut self, var: &str) -> bool {
@@ -763,6 +813,8 @@ pub enum BindingEntry {
         storage: Storage,
         // can be copied to view
         supports_screen: bool,
+        // whether or not this is cleared after every render.
+        persistent: bool,
     },
     Texture {
         // the binding index , might not be contiguous

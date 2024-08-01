@@ -33,6 +33,24 @@ enum Pipeline {
     },
 }
 
+pub enum Targets<'a> {
+    // target first of many targets, or single output, in case of pixel shader.
+    One(&'a wgpu::Texture),
+    Many(&'a [(&'a str, &'a wgpu::Texture)]),
+}
+
+impl<'a> Into<Targets<'a>> for &'a wgpu::Texture {
+    fn into(self) -> Targets<'a> {
+        Targets::One(self)
+    }
+}
+
+impl<'a> Into<Targets<'a>> for &'a [(&'a str, &'a wgpu::Texture)] {
+    fn into(self) -> Targets<'a> {
+        Targets::Many(self)
+    }
+}
+
 impl RenderContext {
     /// Creates a new [RenderContext] with a pipeline corresponding to the shader file
     /// capable of rendering to texture views with the specified `format`.
@@ -230,15 +248,16 @@ impl RenderContext {
 
     /// Encodes the renderpasses and buffer copies in the correct order into
     /// `command` encoder targeting `view`.
-    pub fn encode_render(
+    pub fn encode_render<'a, T: Into<Targets<'a>>>(
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        tex: &wgpu::Texture,
+        tex: T,
         width: u32,
         height: u32,
     ) {
+        let tex = tex.into();
         // resize render targets and copy over texture contents for consistency
         self.update_pass_textures(command_encoder, device, width, height);
         // updates video, audio, streams, shows new images.
@@ -251,8 +270,7 @@ impl RenderContext {
                 self.encode_compute_render(queue, device, command_encoder, tex, width, height);
             }
             Pipeline::Pixel { .. } => {
-                let view = tex.create_view(&Default::default());
-                self.encode_pixel_render(queue, device, command_encoder, &view, width, height);
+                self.encode_pixel_render(queue, device, command_encoder, tex, width, height);
             }
         }
     }
@@ -262,10 +280,12 @@ impl RenderContext {
         _queue: &wgpu::Queue,
         _device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        _tex: &wgpu::Texture,
+        tex: Targets,
         _width: u32,
         _height: u32,
     ) {
+        self.uniforms.map_target_views(&tex);
+
         {
             let Pipeline::Compute {
                 ref compute_pipeline,
@@ -293,6 +313,8 @@ impl RenderContext {
             rpass.dispatch_workgroups(x, y, z);
         }
 
+        self.uniforms.clear_ephemeral_targets();
+        self.uniforms.reset_target_views();
         self.post_render();
     }
 
@@ -301,7 +323,7 @@ impl RenderContext {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        view: Targets,
         width: u32,
         height: u32,
     ) {
@@ -313,6 +335,16 @@ impl RenderContext {
             return;
         };
 
+        //TODO: Bind the many branch to the targets of the pixel shader,
+        // so that pixel shaders can also have fragment writable storage if
+        // the platform supports that.
+        let view = match view {
+            Targets::Many([(_, ref tex), ..]) | Targets::One(ref tex) => {
+                tex.create_view(&Default::default())
+            }
+            Targets::Many([]) => return,
+        };
+
         for (idx, pass) in self.passes.iter().enumerate() {
             self.uniforms.set_pass_index(idx, command_encoder);
 
@@ -322,7 +354,7 @@ impl RenderContext {
                 let mut rpass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: tex_view,
+                        view: &tex_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: pass.get_load_op(),
@@ -347,7 +379,7 @@ impl RenderContext {
                 let mut rpass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
+                        view: &view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
@@ -810,6 +842,7 @@ impl RenderContext {
     /// a state over its runtime using persistent targets
     pub fn is_stateful(&mut self) -> bool {
         self.passes.iter().any(|pass| pass.persistent)
+            || self.uniforms.iter_targets().any(|targ| targ.persistent)
     }
 
     /// copy all common textures and

@@ -123,6 +123,7 @@ impl TweakBindGroup {
                             tex: place_holder_texture,
                             view: placeholder_view,
                             name: uniform.name.clone().unwrap_or_default(),
+                            persistent: maybe_target.map(|t| t.persistent).unwrap_or_default(),
                             storage,
                         });
                     } else {
