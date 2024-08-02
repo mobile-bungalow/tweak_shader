@@ -76,7 +76,7 @@ pub(crate) struct App {
     // Contains the render context
     status: AppStatus,
     // the target texture for the main context
-    output_texture: std::sync::Arc<wgpu::Texture>,
+    output_texture: wgpu::Texture,
     // We build the new ctx here before moving it into current_isf_ctx
     temp_isf_ctx: Cell<Option<Result<RenderContext, RunnerError>>>,
     // Videos that are being polled tracked by variable name
@@ -300,13 +300,13 @@ impl App {
             self.current_shader_mut()
                 .update_resolution([w as f32, h as f32]);
 
-            let out = self.output_texture.clone();
+            let view = self.output_texture.create_view(&Default::default());
             self.current_shader_mut().encode_render(
                 wgpu_queue,
                 wgpu_device,
                 &mut wgpu_encoder,
                 // this texture was shared with `letter_box`  in init
-                &*out,
+                view,
                 w,
                 h,
             );
@@ -315,7 +315,7 @@ impl App {
                 wgpu_queue,
                 wgpu_device,
                 &mut wgpu_encoder,
-                screen_tex,
+                screen_tex.create_view(&Default::default()),
                 size.width,
                 size.height,
             );

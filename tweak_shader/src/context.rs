@@ -35,17 +35,17 @@ enum Pipeline {
 
 pub enum Targets<'a> {
     // target first of many targets, or single output, in case of pixel shader.
-    One(&'a wgpu::Texture),
-    Many(&'a [(&'a str, &'a wgpu::Texture)]),
+    One(wgpu::TextureView),
+    Many(Vec<(&'a str, wgpu::TextureView)>),
 }
 
-impl<'a> Into<Targets<'a>> for &'a wgpu::Texture {
+impl<'a> Into<Targets<'a>> for wgpu::TextureView {
     fn into(self) -> Targets<'a> {
         Targets::One(self)
     }
 }
 
-impl<'a> Into<Targets<'a>> for &'a [(&'a str, &'a wgpu::Texture)] {
+impl<'a> Into<Targets<'a>> for Vec<(&'a str, wgpu::TextureView)> {
     fn into(self) -> Targets<'a> {
         Targets::Many(self)
     }
@@ -237,7 +237,7 @@ impl RenderContext {
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
-        view: &wgpu::Texture,
+        view: wgpu::TextureView,
         width: u32,
         height: u32,
     ) {
@@ -265,7 +265,7 @@ impl RenderContext {
 
         match &self.pipeline {
             Pipeline::Compute { .. } => {
-                self.encode_compute_render(command_encoder, tex, device, queue);
+                self.encode_compute_render(command_encoder, tex, device, queue, width, height);
             }
             Pipeline::Pixel { .. } => {
                 // write changes to uniforms to gpu mapped buffers
@@ -281,17 +281,10 @@ impl RenderContext {
         tex: Targets,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
     ) {
-        let (width, height) = match tex {
-            Targets::One(ref tex) | Targets::Many([(_, ref tex), ..]) => {
-                (tex.width(), tex.height())
-            }
-            _ => {
-                return;
-            }
-        };
-
-        self.uniforms.map_target_views(&tex);
+        self.uniforms.map_target_views(tex);
         self.uniforms.clear_ephemeral_targets(command_encoder);
         // write changes to uniforms to gpu mapped buffers
         self.uniforms.update_uniform_buffers(device, queue);
@@ -348,10 +341,8 @@ impl RenderContext {
         // so that pixel shaders can also have fragment writable storage if
         // the platform supports that.
         let view = match view {
-            Targets::Many([(_, ref tex), ..]) | Targets::One(ref tex) => {
-                tex.create_view(&Default::default())
-            }
-            Targets::Many([]) => return,
+            Targets::One(ref view) => view,
+            Targets::Many(_vec) => todo!("get the relevant output view"),
         };
 
         for (idx, pass) in self.passes.iter().enumerate() {
@@ -696,9 +687,12 @@ impl RenderContext {
             self.screen_buffer_cache = BufferCache::new(&fmt, width, height, None, device);
         };
 
-        let view = self.screen_buffer_cache.tex();
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
 
-        self.render(queue, device, &view, width, height);
+        self.render(queue, device, view, width, height);
 
         let mut out = vec![0; (width * height * block_size) as usize];
 
@@ -743,9 +737,12 @@ impl RenderContext {
                 BufferCache::new(&fmt, width, height, stride.map(|s| s as usize), device);
         };
 
-        let view = self.screen_buffer_cache.tex();
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
 
-        self.render(queue, device, &view, width, height);
+        self.render(queue, device, view, width, height);
 
         read_texture_contents_to_slice(
             device,
@@ -1073,8 +1070,8 @@ impl BufferCache {
             && stride_matches
     }
 
-    pub fn tex(&self) -> Arc<wgpu::Texture> {
-        self.tex.clone()
+    pub fn tex(&self) -> &wgpu::Texture {
+        &self.tex
     }
 
     pub fn buf(&self) -> &wgpu::Buffer {

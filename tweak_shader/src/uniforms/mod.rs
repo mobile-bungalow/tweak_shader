@@ -379,7 +379,7 @@ impl Uniforms {
 
     // replace the views in the storage textures with those
     // proved by the target set.
-    pub fn map_target_views<'a>(&mut self, targets: &Targets<'a>) {
+    pub fn map_target_views<'a>(&mut self, targets: Targets<'a>) {
         match targets {
             Targets::One(tex) => {
                 let mut groups = self
@@ -397,32 +397,35 @@ impl Uniforms {
                 });
 
                 if let Some(view) = user_view {
-                    *view = Some(tex.create_view(&Default::default()));
+                    *view = Some(tex);
                 }
             }
 
             Targets::Many(textures) => {
-                let groups = self
-                    .sets
-                    .iter_mut()
-                    .map(|e| e.binding_entries.iter_mut())
-                    .flatten();
 
-                groups.for_each(|group| match group {
-                    BindingEntry::StorageTexture {
-                        user_provided_view,
-                        name,
-                        ..
-                    } => {
-                        if let Some((_, tex)) = textures
-                            .iter()
-                            .find(|(target_name, _)| *target_name == name.as_str())
-                        {
-                            *user_provided_view = Some(tex.create_view(&Default::default()));
+                for (user_tex_name, tex) in textures {
+                    let groups = self
+                        .sets
+                        .iter_mut()
+                        .map(|e| e.binding_entries.iter_mut())
+                        .flatten();
+
+                    for group in groups {
+                        match group {
+                            BindingEntry::StorageTexture {
+                                user_provided_view,
+                                name,
+                                ..
+                            } => {
+                                if user_tex_name == name {
+                                    *user_provided_view = Some(tex);
+                                    break;
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    _ => {}
-                });
+                }
             }
         };
     }

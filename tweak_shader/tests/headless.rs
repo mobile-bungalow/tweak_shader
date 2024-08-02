@@ -114,7 +114,13 @@ fn basic_frag_target_tex() {
 
     basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
 
-    basic.render(&queue, &device, &out_tex, TEST_RENDER_DIM, TEST_RENDER_DIM);
+    basic.render(
+        &queue,
+        &device,
+        out_tex.create_view(&Default::default()),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
 
     let mut time_0_bytes = vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4_usize];
 
@@ -135,7 +141,13 @@ fn basic_frag_target_tex() {
 
     basic.update_time(1.0);
 
-    basic.render(&queue, &device, &out_tex, TEST_RENDER_DIM, TEST_RENDER_DIM);
+    basic.render(
+        &queue,
+        &device,
+        out_tex.create_view(&Default::default()),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
 
     read_texture_contents_to_slice(
         &device,
@@ -776,7 +788,7 @@ fn compute_targets() {
 
     let inputs_test = RenderContext::new(
         COMPUTE_TARGETS,
-        wgpu::TextureFormat::Rgba8UnormSrgb,
+        wgpu::TextureFormat::Rgba8Unorm,
         &device,
         &queue,
     )
@@ -933,7 +945,7 @@ fn letterboxed_shrimple_texture_load() {
     tx_load.render(
         &queue,
         &device,
-        &shared_tex,
+        shared_tex.create_view(&Default::default()),
         TEST_RENDER_DIM,
         TEST_RENDER_DIM,
     );
