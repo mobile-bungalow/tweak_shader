@@ -273,6 +273,7 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
             panic!("Out Of GPU Memory! bailing");
         }
         wgpu::Error::Validation { description, .. } => {
+            eprintln!("{description}");
             let _ = error_proxy.send_event(RunnerMessage::ValidationError(description.clone()));
         }
     }));

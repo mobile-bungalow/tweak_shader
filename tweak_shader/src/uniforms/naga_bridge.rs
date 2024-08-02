@@ -78,7 +78,7 @@ impl TweakBindGroup {
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
-                        visibility: ShaderStages::VERTEX_FRAGMENT,
+                        visibility: ShaderStages::all(),
                         binding,
                         count: None,
                     };
@@ -122,6 +122,7 @@ impl TweakBindGroup {
                                 .unwrap_or_default(),
                             tex: place_holder_texture,
                             view: placeholder_view,
+                            user_provided_view: None,
                             name: uniform.name.clone().unwrap_or_default(),
                             persistent: maybe_target.map(|t| t.persistent).unwrap_or_default(),
                             storage,
@@ -184,7 +185,7 @@ impl TweakBindGroup {
 
                     let entry = wgpu::BindGroupLayoutEntry {
                         ty: wgpu::BindingType::Sampler(sampler_type),
-                        visibility: ShaderStages::VERTEX_FRAGMENT,
+                        visibility: ShaderStages::all(),
                         binding,
                         count: None,
                     };

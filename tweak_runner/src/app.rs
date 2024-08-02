@@ -127,7 +127,12 @@ impl App {
         .unwrap();
 
         wgpu_device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let ctx = RenderContext::new(shader_source, output_format, wgpu_device, wgpu_queue);
+        let ctx = RenderContext::new(
+            shader_source,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu_device,
+            wgpu_queue,
+        );
         let err_fut = wgpu_device.pop_error_scope();
         let err = pollster::block_on(err_fut);
 
@@ -144,7 +149,7 @@ impl App {
                     old_shader: Some(RenderContext::error_state(
                         wgpu_device,
                         wgpu_queue,
-                        output_format,
+                        wgpu::TextureFormat::Rgba8Unorm,
                     )),
                     err_string: out,
                 }
@@ -153,7 +158,7 @@ impl App {
                 old_shader: Some(RenderContext::error_state(
                     wgpu_device,
                     wgpu_queue,
-                    output_format,
+                    wgpu::TextureFormat::Rgba8Unorm,
                 )),
                 err_string: format!("{e}"),
             },
@@ -173,9 +178,10 @@ impl App {
             mip_level_count: 1,
             sample_count: 1, // crunch crunch
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
@@ -264,7 +270,7 @@ impl App {
         &mut self,
         wgpu_device: &wgpu::Device,
         wgpu_queue: &wgpu::Queue,
-        wgpu_view: &wgpu::Texture,
+        screen_tex: &wgpu::Texture,
         window: &egui_winit::winit::window::Window,
     ) {
         let mut wgpu_encoder =
@@ -285,95 +291,61 @@ impl App {
         if !self.pipeline_invalid {
             self.update_stream_textures(wgpu_device, wgpu_queue);
 
-            if let Some([_, _]) = self.ui_state.options.lock_aspect_ratio {
-                let h = self.output_texture.height();
-                let w = self.output_texture.width();
+            let h = self.output_texture.height();
+            let w = self.output_texture.width();
 
-                self.update_letterbox(w, h, size.width, size.height)
-                    .unwrap();
+            self.update_letterbox(w, h, size.width, size.height)
+                .unwrap();
 
-                self.current_shader_mut()
-                    .update_resolution([w as f32, h as f32]);
+            self.current_shader_mut()
+                .update_resolution([w as f32, h as f32]);
 
-                let out = self.output_texture.clone();
-                self.current_shader_mut().encode_render(
-                    wgpu_queue,
-                    wgpu_device,
-                    &mut wgpu_encoder,
-                    // this texture was shared with `letter_box`  in init
-                    &*out,
-                    w,
-                    h,
-                );
+            let out = self.output_texture.clone();
+            self.current_shader_mut().encode_render(
+                wgpu_queue,
+                wgpu_device,
+                &mut wgpu_encoder,
+                // this texture was shared with `letter_box`  in init
+                &*out,
+                w,
+                h,
+            );
 
-                self.letter_box.encode_render(
-                    wgpu_queue,
-                    wgpu_device,
-                    &mut wgpu_encoder,
-                    wgpu_view,
-                    size.width,
-                    size.height,
-                );
+            self.letter_box.encode_render(
+                wgpu_queue,
+                wgpu_device,
+                &mut wgpu_encoder,
+                screen_tex,
+                size.width,
+                size.height,
+            );
 
-                if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
-                    let (mut vec, w, h) = if self.ui_state.options.use_screen_size_for_screenshots {
-                        let vec = self.letter_box.render_to_vec(
-                            wgpu_queue,
-                            wgpu_device,
-                            size.width,
-                            size.height,
-                        );
-                        (vec, size.width, size.height)
-                    } else {
-                        let vec =
-                            self.current_shader_mut()
-                                .render_to_vec(wgpu_queue, wgpu_device, w, h);
-                        (vec, w, h)
-                    };
-
-                    for chunk in vec.chunks_exact_mut(4) {
-                        // Swap the red and blue channels
-                        chunk.swap(0, 2);
-                    }
-
-                    let dynamic_image = image::DynamicImage::ImageRgba8(
-                        image::RgbaImage::from_raw(w, h, vec).unwrap(),
-                    );
-
-                    dynamic_image.save(path).unwrap();
-                    self.ui_state.screen_shot_scheduled = None;
-                }
-            } else {
-                // Render the actual toy
-                self.current_shader_mut().encode_render(
-                    wgpu_queue,
-                    wgpu_device,
-                    &mut wgpu_encoder,
-                    wgpu_view,
-                    size.width,
-                    size.height,
-                );
-
-                if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
-                    let mut vec = self.current_shader_mut().render_to_vec(
+            if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
+                let (mut vec, w, h) = if self.ui_state.options.use_screen_size_for_screenshots {
+                    let vec = self.letter_box.render_to_vec(
                         wgpu_queue,
                         wgpu_device,
                         size.width,
                         size.height,
                     );
+                    (vec, size.width, size.height)
+                } else {
+                    let vec =
+                        self.current_shader_mut()
+                            .render_to_vec(wgpu_queue, wgpu_device, w, h);
+                    (vec, w, h)
+                };
 
-                    for chunk in vec.chunks_exact_mut(4) {
-                        // Swap the red and blue channels
-                        chunk.swap(0, 2);
-                    }
-
-                    let dynamic_image = image::DynamicImage::ImageRgba8(
-                        image::RgbaImage::from_raw(size.width, size.height, vec).unwrap(),
-                    );
-
-                    dynamic_image.save(path).unwrap();
-                    self.ui_state.screen_shot_scheduled = None;
+                for chunk in vec.chunks_exact_mut(4) {
+                    // Swap the red and blue channels
+                    chunk.swap(0, 2);
                 }
+
+                let dynamic_image =
+                    image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w, h, vec).unwrap());
+
+                dynamic_image.save(path).unwrap();
+                self.ui_state.screen_shot_scheduled = None;
             }
         }
 
@@ -426,7 +398,7 @@ impl App {
         );
 
         {
-            let view = &wgpu_view.create_view(&wgpu::TextureViewDescriptor::default());
+            let view = &screen_tex.create_view(&wgpu::TextureViewDescriptor::default());
             let mut render_pass = wgpu_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Gui"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -458,12 +430,16 @@ impl App {
         out_width: u32,
         out_height: u32,
     ) {
-        if self.ui_state.options.lock_aspect_ratio.is_none() {
-            self.current_shader_mut()
-                .update_resolution([out_width as f32, out_height as f32]);
-        } else {
-            let [width, height] = self.ui_state.options.lock_aspect_ratio.unwrap();
+        self.current_shader_mut()
+            .update_resolution([out_width as f32, out_height as f32]);
 
+        let [width, height] = self
+            .ui_state
+            .options
+            .lock_aspect_ratio
+            .unwrap_or([out_width, out_height]);
+
+        if self.output_texture.width() != width || self.output_texture.height() != height {
             let output_texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -474,8 +450,9 @@ impl App {
                 mip_level_count: 1,
                 sample_count: 1, // crunch crunch
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::STORAGE_BINDING
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -531,8 +508,9 @@ impl App {
         };
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let temp_context = RenderContext::new(source, self.output_format, device, queue)
-            .map_err(RunnerError::Shader);
+        let temp_context =
+            RenderContext::new(source, wgpu::TextureFormat::Rgba8Unorm, device, queue)
+                .map_err(RunnerError::Shader);
         let err_fut = device.pop_error_scope();
         let err = pollster::block_on(err_fut);
 
@@ -589,6 +567,9 @@ impl App {
             }
             RunnerMessage::Resized { width, height } => {
                 self.current_shader_mut().update_resolution([width, height]);
+                if self.ui_state.options.lock_aspect_ratio.is_none() {
+                    self.must_update_render_targets = true;
+                }
             }
             RunnerMessage::UnloadImage { var } => {
                 self.video_streams.remove(&var);
@@ -734,7 +715,7 @@ impl App {
                                 Some(RenderContext::error_state(
                                     wgpu_device,
                                     wgpu_queue,
-                                    self.output_format,
+                                    wgpu::TextureFormat::Rgba8Unorm,
                                 ))
                             }),
                             err_string: new_err_string,

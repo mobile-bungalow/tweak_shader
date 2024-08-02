@@ -74,12 +74,12 @@ impl Uniforms {
                     ..
                 } = b
                 {
-                    Some((tex.format().remove_srgb_suffix(), name.clone()))
+                    Some((tex.format(), name.clone()))
                 } else {
                     None
                 }
             })
-            .filter(|(fmt, _name)| *fmt != format.remove_srgb_suffix())
+            .filter(|(fmt, _name)| fmt != format)
             .collect();
 
         if !mismatch_target_textures.is_empty() {

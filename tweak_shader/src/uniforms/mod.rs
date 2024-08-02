@@ -381,42 +381,106 @@ impl Uniforms {
     // proved by the target set.
     pub fn map_target_views<'a>(&mut self, targets: &Targets<'a>) {
         match targets {
-            Targets::One(_) => {
-                todo!("map the one to the current default screen slot")
+            Targets::One(tex) => {
+                let mut groups = self
+                    .sets
+                    .iter_mut()
+                    .map(|e| {
+                        //TODO: this is hacky! only rebind if needed
+                        e.needs_rebind = true;
+                        e.binding_entries.iter_mut()
+                    })
+                    .flatten();
+
+                let user_view = groups.find_map(|group| {
+                    extract!(group, BindingEntry::StorageTexture { user_provided_view: view, supports_screen: true, .. } => view )
+                });
+
+                if let Some(view) = user_view {
+                    *view = Some(tex.create_view(&Default::default()));
+                }
             }
-            Targets::Many(_) => {
-                todo!("map the many to the proper target slots")
+
+            Targets::Many(textures) => {
+                let groups = self
+                    .sets
+                    .iter_mut()
+                    .map(|e| e.binding_entries.iter_mut())
+                    .flatten();
+
+                groups.for_each(|group| match group {
+                    BindingEntry::StorageTexture {
+                        user_provided_view,
+                        name,
+                        ..
+                    } => {
+                        if let Some((_, tex)) = textures
+                            .iter()
+                            .find(|(target_name, _)| *target_name == name.as_str())
+                        {
+                            *user_provided_view = Some(tex.create_view(&Default::default()));
+                        }
+                    }
+                    _ => {}
+                });
             }
         };
     }
 
-    // replace the views in the storage textures with those
-    // of the textures they used before they were replaced
-    // during the last map_target_views call
-    pub fn reset_target_views(&mut self) {
-        todo!();
+    pub fn clear_user_targets(&mut self) {
+        let groups = self
+            .sets
+            .iter_mut()
+            .map(|e| e.binding_entries.iter_mut())
+            .flatten();
+
+        groups.for_each(|group| match group {
+            BindingEntry::StorageTexture {
+                ref mut user_provided_view,
+                ..
+            } => *user_provided_view = None,
+            _ => {}
+        });
     }
 
     // zero the textures of any targets
     // that are not labeled as persistent
-    pub fn clear_ephemeral_targets(&mut self) {
-        todo!();
+    pub fn clear_ephemeral_targets(&mut self, command_encoder: &mut wgpu::CommandEncoder) {
+        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+
+        let views = groups.filter_map(|group| {
+            extract!(group, BindingEntry::StorageTexture { view, user_provided_view, persistent: false, .. } 
+                        => user_provided_view.as_ref().unwrap_or(view) )
+        });
+
+        for ephemeral_view in views {
+            command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Clear Texture Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &ephemeral_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+        }
     }
 
     pub fn iter_targets<'a>(&'a self) -> impl Iterator<Item = TargetDescriptor<'a>> {
         let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
-        groups.filter_map(|group| match group {
-            BindingEntry::StorageTexture {
-                name,
-                tex,
-                persistent,
-                ..
-            } => Some(TargetDescriptor {
-                persistent: *persistent,
-                name,
-                format: tex.format(),
-            }),
-            _ => None,
+        groups.filter_map(|group| {
+            extract!(group, BindingEntry::StorageTexture { name, tex, persistent, .. } 
+                    => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
         })
     }
 
@@ -428,6 +492,7 @@ impl Uniforms {
         let Some(addr) = self.lookup_table.get(var) else {
             return false;
         };
+
         if let Some(set) = self.sets.get_mut(addr.set) {
             set.unload_texture(addr)
         } else {
@@ -807,6 +872,7 @@ pub enum BindingEntry {
         // texture resource if not default
         tex: wgpu::Texture,
         view: wgpu::TextureView,
+        user_provided_view: Option<wgpu::TextureView>,
         // variable name
         name: String,
         // storage location
@@ -1281,10 +1347,17 @@ impl TweakBindGroup {
                         resource: wgpu::BindingResource::Sampler(&*samp),
                     });
                 }
-                BindingEntry::StorageTexture { binding, view, .. } => {
+                BindingEntry::StorageTexture {
+                    binding,
+                    view,
+                    user_provided_view,
+                    ..
+                } => {
                     out.push(wgpu::BindGroupEntry {
                         binding: *binding,
-                        resource: wgpu::BindingResource::TextureView(view),
+                        resource: wgpu::BindingResource::TextureView(
+                            user_provided_view.as_ref().unwrap_or(view),
+                        ),
                     });
                 }
             }

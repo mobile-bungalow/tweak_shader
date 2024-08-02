@@ -262,29 +262,39 @@ impl RenderContext {
         self.update_pass_textures(command_encoder, device, width, height);
         // updates video, audio, streams, shows new images.
         self.update_display_textures(device, queue);
-        // write changes to uniforms to gpu mapped buffers
-        self.uniforms.update_uniform_buffers(device, queue);
 
         match &self.pipeline {
             Pipeline::Compute { .. } => {
-                self.encode_compute_render(queue, device, command_encoder, tex, width, height);
+                self.encode_compute_render(command_encoder, tex, device, queue);
             }
             Pipeline::Pixel { .. } => {
-                self.encode_pixel_render(queue, device, command_encoder, tex, width, height);
+                // write changes to uniforms to gpu mapped buffers
+                self.uniforms.update_uniform_buffers(device, queue);
+                self.encode_pixel_render(device, command_encoder, tex);
             }
         }
     }
 
     fn encode_compute_render(
         &mut self,
-        _queue: &wgpu::Queue,
-        _device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
         tex: Targets,
-        _width: u32,
-        _height: u32,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
     ) {
+        let (width, height) = match tex {
+            Targets::One(ref tex) | Targets::Many([(_, ref tex), ..]) => {
+                (tex.width(), tex.height())
+            }
+            _ => {
+                return;
+            }
+        };
+
         self.uniforms.map_target_views(&tex);
+        self.uniforms.clear_ephemeral_targets(command_encoder);
+        // write changes to uniforms to gpu mapped buffers
+        self.uniforms.update_uniform_buffers(device, queue);
 
         {
             let Pipeline::Compute {
@@ -310,22 +320,21 @@ impl RenderContext {
                 rpass.set_push_constants(0, bytes);
             }
 
-            rpass.dispatch_workgroups(x, y, z);
+            let dispatch_x = (width + x) / x;
+            let dispatch_y = (height + y) / y;
+
+            rpass.dispatch_workgroups(dispatch_x, dispatch_y, z);
         }
 
-        self.uniforms.clear_ephemeral_targets();
-        self.uniforms.reset_target_views();
+        self.uniforms.clear_user_targets();
         self.post_render();
     }
 
     fn encode_pixel_render(
         &mut self,
-        queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
         view: Targets,
-        width: u32,
-        height: u32,
     ) {
         let Pipeline::Pixel {
             ref pipeline,
@@ -367,11 +376,13 @@ impl RenderContext {
                 });
 
                 rpass.set_pipeline(float_pipeline);
+
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }
+
                 if let Some(bytes) = self.uniforms.push_constant_bytes() {
-                    rpass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytes);
+                    rpass.set_push_constants(wgpu::ShaderStages::all(), 0, bytes);
                 }
 
                 rpass.draw(0..3, 0..1);
@@ -451,24 +462,31 @@ impl RenderContext {
                             );
                         }
                     } else {
-                        let size = height
-                            * width
-                            * pass
-                                .target_format
-                                .block_copy_size(Some(wgpu::TextureAspect::All))
-                                .unwrap_or(4);
+                        let Some(tex) = self.uniforms.get_texture(tex_name) else {
+                            continue;
+                        };
 
-                        let slice = &vec![0; size as usize];
-                        self.uniforms.load_texture(
-                            tex_name,
-                            slice,
-                            height,
-                            width,
-                            None,
-                            &pass.target_format,
-                            device,
-                            queue,
-                        );
+                        let view = tex.create_view(&Default::default());
+
+                        command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("Clear Texture Pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                                        r: 0.0,
+                                        g: 0.0,
+                                        b: 0.0,
+                                        a: 0.0,
+                                    }),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            occlusion_query_set: None,
+                            timestamp_writes: None,
+                        });
                     }
                 }
             }
