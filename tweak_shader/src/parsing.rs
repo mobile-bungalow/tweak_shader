@@ -401,6 +401,8 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
         }
     }
 
+    desc.passes.sort_by_key(|pass| pass.index);
+
     Ok(desc)
 }
 

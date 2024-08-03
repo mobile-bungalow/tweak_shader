@@ -78,7 +78,11 @@ impl TweakBindGroup {
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
-                        visibility: ShaderStages::all(),
+                        visibility: if document.stage == naga::ShaderStage::Compute {
+                            ShaderStages::COMPUTE
+                        } else {
+                            ShaderStages::FRAGMENT
+                        },
                         binding,
                         count: None,
                     };
@@ -185,7 +189,11 @@ impl TweakBindGroup {
 
                     let entry = wgpu::BindGroupLayoutEntry {
                         ty: wgpu::BindingType::Sampler(sampler_type),
-                        visibility: ShaderStages::all(),
+                        visibility: if document.stage == naga::ShaderStage::Compute {
+                            ShaderStages::COMPUTE
+                        } else {
+                            ShaderStages::FRAGMENT
+                        },
                         binding,
                         count: None,
                     };

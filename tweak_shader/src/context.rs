@@ -371,7 +371,7 @@ impl RenderContext {
                 }
 
                 if let Some(bytes) = self.uniforms.push_constant_bytes() {
-                    rpass.set_push_constants(wgpu::ShaderStages::all(), 0, bytes);
+                    rpass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytes);
                 }
 
                 rpass.draw(0..3, 0..1);
@@ -551,43 +551,11 @@ impl RenderContext {
             .override_texture_view_with_tex(variable_name, texture)
     }
 
-    /// maps a texture view to the pipeline in place of a locally
-    /// stored texture. this will fail if you try to override a render target texture.
-    pub fn load_shared_texture_view(
-        &mut self,
-        texture: wgpu::TextureView,
-        width: u32,
-        height: u32,
-        variable_name: &str,
-    ) -> bool {
-        // fizzle on attempting to write a target texture
-        if self
-            .passes
-            .iter()
-            .filter_map(|p| p.pass_target_var_name.as_ref())
-            .any(|t| t == variable_name)
-        {
-            return false;
-        }
-
-        self.uniforms
-            .override_texture_view_with_view(variable_name, width, height, texture)
-    }
-
-    /// If a texture is loaded in the pipeline under `variable_name` this will return a new view into it.
-    pub fn get_texture_view(&mut self, variable_name: &str) -> Option<wgpu::TextureView> {
+    /// If a texture is loaded in the pipeline under `variable_name` this will reference to it.
+    /// this includes storage textures
+    pub fn get_texture(&mut self, variable_name: &str) -> Option<&wgpu::Texture> {
         let tex = self.uniforms.get_texture(variable_name)?;
-        let desc = wgpu::TextureViewDescriptor {
-            label: Some(variable_name),
-            format: Some(tex.format()),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            aspect: wgpu::TextureAspect::All,
-            base_mip_level: 0,
-            mip_level_count: Some(1),
-            base_array_layer: 0,
-            array_layer_count: Some(1),
-        };
-        Some(tex.create_view(&desc))
+        Some(tex)
     }
 
     /// returns an instance of the render context in a default error state

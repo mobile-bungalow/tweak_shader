@@ -530,12 +530,7 @@ fn shrimple_texture_load_view() {
         &shrimple_bytes,
     );
 
-    tx_load.load_shared_texture_view(
-        tex.create_view(&Default::default()),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-        "input_image",
-    );
+    tx_load.load_shared_texture(&tex, "input_image");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
     let desc = tweak_shader::TextureDesc {

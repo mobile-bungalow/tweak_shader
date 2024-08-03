@@ -653,8 +653,17 @@ impl Uniforms {
     }
 
     pub fn get_texture(&self, name: &str) -> Option<&wgpu::Texture> {
-        let addr = self.lookup_table.get(name)?;
-        self.sets.get(addr.set)?.get_texture(addr)
+        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+        let mut targets = groups.filter_map(|group| {
+            extract!(group, BindingEntry::StorageTexture { name, tex, .. } => (name, tex))
+        });
+
+        if let Some((_, tex)) = targets.find(|(targ_name, _)| targ_name.as_str() == name) {
+           Some(tex)
+        } else {
+            let addr = self.lookup_table.get(name)?;
+            self.sets.get(addr.set)?.get_texture(addr)
+        }
     }
 
     pub fn set_pass_index(&mut self, index: usize, enc: &mut wgpu::CommandEncoder) {
