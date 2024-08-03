@@ -538,12 +538,14 @@ fn shrimple_texture_load_view() {
     );
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
@@ -566,12 +568,15 @@ fn shrimple_texture_load() {
     let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
@@ -594,12 +599,14 @@ fn float_texture_load() {
     let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let _ = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 }
@@ -623,7 +630,14 @@ fn unaligned_texture() {
     let zac_bytes = png_pixels!("./resources/zac.png");
 
     tx_load.update_resolution([width as f32, height as f32]);
-    tx_load.load_texture(zac_bytes.clone(), "input_image".into(), width, height);
+    let desc = tweak_shader::TextureDesc {
+        width,
+        height,
+        data: &zac_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let output = tx_load.render_to_vec(&queue, &device, width, height);
 
@@ -649,7 +663,15 @@ fn unaligned_texture_from_slice() {
     let zac_bytes = png_pixels!("./resources/zac.png");
 
     tx_load.update_resolution([width as f32, height as f32]);
-    tx_load.load_texture(zac_bytes.clone(), "input_image".into(), width, height);
+
+    let desc = tweak_shader::TextureDesc {
+        width,
+        height,
+        data: &zac_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let mut vec = vec![0u8; (width * height * 4) as usize];
     tx_load.render_to_slice(
@@ -926,12 +948,14 @@ fn letterboxed_shrimple_texture_load() {
     let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     // create 256 x 256 rgba texture, load into letter box, render to it with shrimp
     // render output again with letterbox
@@ -1026,7 +1050,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
     (d, q)
 }
 use image::{ImageBuffer, ImageFormat, Rgba};
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt, TextureFormat};
 
 fn approximately_equivalent(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len()
