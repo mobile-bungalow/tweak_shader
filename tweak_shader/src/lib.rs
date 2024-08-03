@@ -114,7 +114,7 @@ pub mod input_type;
 
 pub use wgpu;
 // the main rendering context.
-pub use context::RenderContext;
+pub use context::{RenderContext, TextureDesc};
 
 pub(crate) type VarName = String;
 

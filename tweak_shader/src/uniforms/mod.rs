@@ -1,7 +1,7 @@
 mod naga_bridge;
 mod validation;
 
-use crate::context::Targets;
+use crate::context::{Targets, self};
 use crate::input_type::*;
 use crate::parsing::Document;
 
@@ -258,6 +258,11 @@ impl Uniforms {
         Ok(out)
     }
 
+    pub fn set_compute_target(&mut self, uniform_name: &str) -> Result<(), Error> {
+        todo!();
+        Ok(())
+    }
+
     // Copy this uniforms data into other - goes by name
     pub fn copy_into(&mut self, other: &mut Self, device: &wgpu::Device, queue: &wgpu::Queue) {
         // Copy Uniforms
@@ -430,7 +435,7 @@ impl Uniforms {
         };
     }
 
-    pub fn clear_user_targets(&mut self) {
+    pub fn reset_targets_to_context_managed(&mut self) {
         let groups = self
             .sets
             .iter_mut()
@@ -533,14 +538,11 @@ impl Uniforms {
     pub fn load_texture(
         &mut self,
         var_name: &str,
-        data: &[u8],
-        height: u32,
-        width: u32,
-        bytes_per_row: Option<u32>,
-        format: &wgpu::TextureFormat,
+        desc: context::TextureDesc,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
+        let context::TextureDesc { width, height, stride, data, format } = desc;
         let addr = self.lookup_table.get(var_name).copied();
         let input_type = addr
             .and_then(|addr| self.query_addr_mut(var_name, &addr))
@@ -561,13 +563,13 @@ impl Uniforms {
             (_, Some(texture))
                 if texture.height() == height
                     && texture.width() == width
-                    && texture.format() == *format =>
+                    && texture.format() == format =>
             {
                 texture
             }
             _ => {
                 let mut desc = txtr_desc(width, height);
-                desc.format = *format;
+                desc.format = format;
                 let tex = device.create_texture(&desc);
                 self.set_texture(var_name, tex);
                 self.get_texture(var_name).unwrap()
@@ -584,7 +586,7 @@ impl Uniforms {
             data,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: bytes_per_row.or(Some(width * block_size)),
+                bytes_per_row: stride.or(Some(width * block_size)),
                 rows_per_image: None,
             },
             wgpu::Extent3d {

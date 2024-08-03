@@ -16,7 +16,6 @@ pub struct RenderContext {
     uniforms: uniforms::Uniforms,
     passes: Vec<RenderPass>,
     pipeline: Pipeline,
-    texture_job_queue: Vec<TextureJob>,
     screen_buffer_cache: BufferCache,
     stage: wgpu::naga::ShaderStage,
 }
@@ -31,6 +30,14 @@ enum Pipeline {
         pipeline: wgpu::RenderPipeline,
         float_pipeline: wgpu::RenderPipeline,
     },
+}
+
+pub struct TextureDesc<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub stride: Option<u32>,
+    pub data: &'a [u8],
+    pub format: wgpu::TextureFormat,
 }
 
 pub enum Targets<'a> {
@@ -220,7 +227,6 @@ impl RenderContext {
             pipeline,
             passes: pass_structure,
             screen_buffer_cache: BufferCache::new(&format, 1, 1, None, device),
-            texture_job_queue: Vec::new(),
             stage: document.stage,
         })
     }
@@ -230,38 +236,28 @@ impl RenderContext {
         self.stage == ShaderStage::Compute
     }
 
-    /// Renders the shader maintained by this context to the provided texture view.
-    /// this will produce validation errors if the view format does not match the
-    /// format the context was configured with in [RenderContext::new].
-    pub fn render(
-        &mut self,
-        queue: &wgpu::Queue,
-        device: &wgpu::Device,
-        view: wgpu::TextureView,
-        width: u32,
-        height: u32,
-    ) {
-        let mut command_encoder = device.create_command_encoder(&Default::default());
-        self.encode_render(queue, device, &mut command_encoder, view, width, height);
-        queue.submit(Some(command_encoder.finish()));
+    /// If the shader is a compute shader, then subsequent calls to
+    /// `render_to_vec` and `render_to_slice`. will yield data from those
+    /// storage textures.
+    pub fn set_compute_target(&mut self, uniform_name: &str) -> Result<(), uniforms::Error> {
+        self.uniforms.set_compute_target(uniform_name)?;
+        Ok(())
     }
 
     /// Encodes the renderpasses and buffer copies in the correct order into
     /// `command` encoder targeting `view`.
-    pub fn encode_render<'a, T: Into<Targets<'a>>>(
+    pub fn render<'a, T: Into<Targets<'a>>>(
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        tex: T,
+        targets: T,
         width: u32,
         height: u32,
     ) {
-        let tex = tex.into();
+        let tex = targets.into();
         // resize render targets and copy over texture contents for consistency
         self.update_pass_textures(command_encoder, device, width, height);
-        // updates video, audio, streams, shows new images.
-        self.update_display_textures(device, queue);
 
         match &self.pipeline {
             Pipeline::Compute { .. } => {
@@ -289,6 +285,7 @@ impl RenderContext {
         // write changes to uniforms to gpu mapped buffers
         self.uniforms.update_uniform_buffers(device, queue);
 
+        //todo!("loop over passes");
         {
             let Pipeline::Compute {
                 ref compute_pipeline,
@@ -317,9 +314,10 @@ impl RenderContext {
             let dispatch_y = (height + y) / y;
 
             rpass.dispatch_workgroups(dispatch_x, dispatch_y, z);
+            //todo!("copy pass targets into their forward buffers... does this mean... passing everything in as a texture");
         }
 
-        self.uniforms.clear_user_targets();
+        self.uniforms.reset_targets_to_context_managed();
         self.post_render();
     }
 
@@ -525,27 +523,15 @@ impl RenderContext {
 
     /// Loads a texture of the specified format into the variable with name `name`
     /// immediately.
-    pub fn load_texture_immediate<S: AsRef<str>>(
+    pub fn load_texture<S: AsRef<str>>(
         &mut self,
         name: S,
-        height: u32,
-        width: u32,
-        bytes_per_row: u32,
+        texture_desc: TextureDesc,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        format: &wgpu::TextureFormat,
-        data: &[u8],
     ) {
-        self.uniforms.load_texture(
-            name.as_ref(),
-            data,
-            height,
-            width,
-            Some(bytes_per_row),
-            format,
-            device,
-            queue,
-        );
+        self.uniforms
+            .load_texture(name.as_ref(), texture_desc, device, queue);
     }
 
     /// Creates a texture view and maps it to the pipeline in place of a locally
@@ -604,43 +590,6 @@ impl RenderContext {
         Some(tex.create_view(&desc))
     }
 
-    /// Queues the texture with `variable_name`
-    /// to be written to with the data in `data`.
-    /// data is assumed to be in rgba8unormsrgb format.
-    /// data will NOT be loaded if it is the wrong size
-    /// or if you attempt to write to a
-    /// render pass target texture.
-    pub fn load_texture(
-        &mut self,
-        data: Vec<u8>,
-        variable_name: String,
-        width: u32,
-        height: u32,
-    ) -> bool {
-        // fizzle on attempting to write a target texture
-        if self
-            .passes
-            .iter()
-            .filter_map(|p| p.pass_target_var_name.as_ref())
-            .any(|t| t == &variable_name)
-        {
-            return false;
-        }
-
-        if data.len() != (width * height * 4) as usize {
-            return false;
-        }
-
-        // only keep the most recent texture update
-        self.texture_job_queue.push(TextureJob {
-            data,
-            width,
-            height,
-            variable_name,
-        });
-        true
-    }
-
     /// returns an instance of the render context in a default error state
     /// displaying a test card  Useful when displaying errors to the user
     /// if you don't want to bail the program and have no visual fallback.
@@ -692,7 +641,9 @@ impl RenderContext {
             .tex()
             .create_view(&Default::default());
 
-        self.render(queue, device, view, width, height);
+        let mut command_encoder = device.create_command_encoder(&Default::default());
+        self.render(queue, device, &mut command_encoder, view, width, height);
+        queue.submit(Some(command_encoder.finish()));
 
         let mut out = vec![0; (width * height * block_size) as usize];
 
@@ -742,7 +693,9 @@ impl RenderContext {
             .tex()
             .create_view(&Default::default());
 
-        self.render(queue, device, view, width, height);
+        let mut command_encoder = device.create_command_encoder(&Default::default());
+        self.render(queue, device, &mut command_encoder, view, width, height);
+        queue.submit(Some(command_encoder.finish()));
 
         read_texture_contents_to_slice(
             device,
@@ -753,21 +706,6 @@ impl RenderContext {
             stride,
             slice,
         );
-    }
-
-    fn update_display_textures(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        while let Some(job) = self.texture_job_queue.pop() {
-            self.uniforms.load_texture(
-                &job.variable_name,
-                job.data.as_ref(),
-                job.height,
-                job.width,
-                None,
-                &wgpu::TextureFormat::Rgba8UnormSrgb,
-                device,
-                queue,
-            );
-        }
     }
 
     // resizes all the render pass target textures
@@ -944,15 +882,6 @@ impl RenderContext {
     pub fn update_resolution(&mut self, res: [f32; 2]) {
         self.uniforms.global_data_mut().resolution = [res[0], res[1], res[0] / res[1]];
     }
-}
-
-#[derive(Debug)]
-// a queued rgba8unormsrgb texture job
-struct TextureJob {
-    data: Vec<u8>,
-    variable_name: String,
-    height: u32,
-    width: u32,
 }
 
 #[derive(Debug)]

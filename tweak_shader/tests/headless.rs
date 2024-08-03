@@ -114,13 +114,16 @@ fn basic_frag_target_tex() {
 
     basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
 
+    let mut enc = device.create_command_encoder(&Default::default());
     basic.render(
         &queue,
         &device,
+        &mut enc,
         out_tex.create_view(&Default::default()),
         TEST_RENDER_DIM,
         TEST_RENDER_DIM,
     );
+    queue.submit(Some(enc.finish()));
 
     let mut time_0_bytes = vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4_usize];
 
@@ -141,13 +144,16 @@ fn basic_frag_target_tex() {
 
     basic.update_time(1.0);
 
+    let mut enc = device.create_command_encoder(&Default::default());
     basic.render(
         &queue,
         &device,
+        &mut enc,
         out_tex.create_view(&Default::default()),
         TEST_RENDER_DIM,
         TEST_RENDER_DIM,
     );
+    queue.submit(Some(enc.finish()));
 
     read_texture_contents_to_slice(
         &device,
@@ -942,13 +948,16 @@ fn letterboxed_shrimple_texture_load() {
         panic!("Texture FOUND?");
     }
 
+    let mut enc = device.create_command_encoder(&Default::default());
     tx_load.render(
         &queue,
         &device,
+        &mut enc,
         shared_tex.create_view(&Default::default()),
         TEST_RENDER_DIM,
         TEST_RENDER_DIM,
     );
+    queue.submit(Some(enc.finish()));
 
     let out = letterbox.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
     //write_texture_to_png(out.as_slice(), "letterbox.png").unwrap();

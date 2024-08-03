@@ -77,10 +77,14 @@ pub(crate) struct App {
     status: AppStatus,
     // the target texture for the main context
     output_texture: wgpu::Texture,
+    output_format: wgpu::TextureFormat,
+    // dirty textures specified by bytes of the next frame and binding location
     // We build the new ctx here before moving it into current_isf_ctx
     temp_isf_ctx: Cell<Option<Result<RenderContext, RunnerError>>>,
     // Videos that are being polled tracked by variable name
     video_streams: BTreeMap<String, VideoLoader>,
+    // A list of in memory images to load before rendering,
+    texture_jobs: Vec<(String, Vec<u8>, u32, u32)>,
     // If true we will recompile on every file modified event that changes the md5.
     // set to true when there has been a file event, set to low when the compiled shader is
     // moved into the temp_isf_ctx
@@ -91,8 +95,6 @@ pub(crate) struct App {
     // The render targets have been reconfigured by the user
     must_update_render_targets: bool,
     // Screen output format
-    output_format: wgpu::TextureFormat,
-    // dirty textures specified by bytes of the next frame and binding location
     shader_path: PathBuf,
     frame_ct: u32,
     local: chrono::DateTime<Local>,
@@ -193,6 +195,7 @@ impl App {
         let start_time = std::time::Instant::now();
         let last_frame = std::time::Instant::now();
         Ok(Self {
+            texture_jobs: vec![],
             must_update_render_targets: false,
             output_texture: output_texture.into(),
             letter_box,
@@ -227,16 +230,15 @@ impl App {
 
         for (buf, name, width, height) in video_job_vec {
             if let Some(buf) = buf {
-                self.current_shader_mut().load_texture_immediate(
-                    name,
-                    height,
+                let desc = tweak_shader::TextureDesc {
                     width,
-                    width * 4,
-                    wgpu_device,
-                    wgpu_queue,
-                    &wgpu::TextureFormat::Rgba8Unorm,
-                    &buf.lock().unwrap(),
-                );
+                    height,
+                    stride: None,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    data: &buf.lock().unwrap(),
+                };
+                self.current_shader_mut()
+                    .load_texture(name, desc, wgpu_device, wgpu_queue);
             }
         }
     }
@@ -283,6 +285,19 @@ impl App {
 
         let size = window.inner_size();
 
+        while let Some((name, rgba_8_data, width, height)) = self.texture_jobs.pop() {
+            let desc = tweak_shader::TextureDesc {
+                data: &rgba_8_data,
+                width,
+                height,
+                stride: None,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            };
+
+            self.current_shader_mut()
+                .load_texture(name, desc, wgpu_device, wgpu_queue)
+        }
+
         if self.must_update_render_targets {
             self.update_render_targets(wgpu_device, size.width, size.height);
             self.must_update_render_targets = false;
@@ -301,7 +316,7 @@ impl App {
                 .update_resolution([w as f32, h as f32]);
 
             let view = self.output_texture.create_view(&Default::default());
-            self.current_shader_mut().encode_render(
+            self.current_shader_mut().render(
                 wgpu_queue,
                 wgpu_device,
                 &mut wgpu_encoder,
@@ -311,7 +326,7 @@ impl App {
                 h,
             );
 
-            self.letter_box.encode_render(
+            self.letter_box.render(
                 wgpu_queue,
                 wgpu_device,
                 &mut wgpu_encoder,
@@ -582,12 +597,8 @@ impl App {
                         height,
                         width,
                     }) => {
-                        self.current_shader_mut().load_texture(
-                            rgba8_data,
-                            var.clone(),
-                            width,
-                            height,
-                        );
+                        self.texture_jobs
+                            .push((var.clone(), rgba8_data, width, height));
 
                         if let Some(file) = path.file_name() {
                             self.ui_state
