@@ -1,10 +1,11 @@
 mod naga_bridge;
 mod validation;
 
-use crate::context::{Targets, self};
+use crate::context::{self, Targets};
 use crate::input_type::*;
 use crate::parsing::Document;
 
+use __core::default;
 use naga::{AddressSpace, ResourceBinding, StructMember};
 use naga::{FastHashMap, FastHashSet, FastIndexMap};
 pub use naga_bridge::*;
@@ -76,6 +77,15 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("Tried to set output to nonexistant Target {0}.")]
+    NonexistantTarget(String),
+
+    #[error("Tried to set output to target without the `screen` specifier {0}.")]
+    NotScreenTarget(String),
+
+    #[error("Tried to set output target to a uniform that is not an output compatible storage texture {0}.")]
+    NotStorageTexture(String),
+
     #[error("A Naga Arena was missing a handle it said it had, this might be a Naga bug.")]
     Handle,
 
@@ -153,6 +163,9 @@ pub struct Uniforms {
     pass_indices: wgpu::Buffer,
     /// The output texture of the render context, kept for convenience.
     format: wgpu::TextureFormat,
+    /// If this is a compute shader uniform, then use either this or the first
+    /// applicable texture as the output for "render_to_vec / slice" calls
+    default_compute_texture: Option<String>,
 }
 
 impl Uniforms {
@@ -251,6 +264,7 @@ impl Uniforms {
             format: *format,
             place_holder_texture,
             utility_block_data,
+            default_compute_texture: None,
         };
 
         out.validate(document, format)?;
@@ -258,9 +272,28 @@ impl Uniforms {
         Ok(out)
     }
 
-    pub fn set_compute_target(&mut self, uniform_name: &str) -> Result<(), Error> {
-        todo!();
-        Ok(())
+    pub fn set_compute_target(&mut self, name: &str) -> Result<(), Error> {
+        let addr = self
+            .lookup_table
+            .get(name)
+            .ok_or(Error::NonexistantTarget(name.to_owned()))?;
+        let set = self
+            .sets
+            .get(addr.set)
+            .ok_or(Error::NonexistantTarget(name.to_owned()))?;
+        if let Some(BindingEntry::StorageTexture {
+            supports_screen, ..
+        }) = set.binding_entries.get(addr.binding)
+        {
+            if *supports_screen {
+                self.default_compute_texture = Some(name.to_owned());
+                Ok(())
+            } else {
+                Err(Error::NotScreenTarget(name.to_owned()))
+            }
+        } else {
+            Err(Error::NotStorageTexture(name.to_owned()))
+        }
     }
 
     // Copy this uniforms data into other - goes by name
@@ -384,30 +417,50 @@ impl Uniforms {
 
     // replace the views in the storage textures with those
     // proved by the target set.
+    // TODO: this function is really ugly. it will do for now
+    // but it is really deep.
     pub fn map_target_views<'a>(&mut self, targets: Targets<'a>) {
         match targets {
-            Targets::One(tex) => {
+            Targets::One(substitute_view) => {
                 let mut groups = self
                     .sets
                     .iter_mut()
                     .map(|e| {
                         //TODO: this is hacky! only rebind if needed
+                        // and certainly not as a side effect of a map
                         e.needs_rebind = true;
                         e.binding_entries.iter_mut()
                     })
                     .flatten();
 
                 let user_view = groups.find_map(|group| {
-                    extract!(group, BindingEntry::StorageTexture { user_provided_view: view, supports_screen: true, .. } => view )
+                    if let BindingEntry::StorageTexture {
+                        user_provided_view,
+                        name,
+                        supports_screen: true,
+                        ..
+                    } = group
+                    {
+                        if let Some(default_name) = self.default_compute_texture.as_ref() {
+                            if default_name == name {
+                                Some(user_provided_view)
+                            } else {
+                                None
+                            }
+                        } else {
+                            Some(user_provided_view)
+                        }
+                    } else {
+                        None
+                    }
                 });
 
                 if let Some(view) = user_view {
-                    *view = Some(tex);
+                    *view = Some(substitute_view);
                 }
             }
 
             Targets::Many(textures) => {
-
                 for (user_tex_name, tex) in textures {
                     let groups = self
                         .sets
@@ -542,7 +595,13 @@ impl Uniforms {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let context::TextureDesc { width, height, stride, data, format } = desc;
+        let context::TextureDesc {
+            width,
+            height,
+            stride,
+            data,
+            format,
+        } = desc;
         let addr = self.lookup_table.get(var_name).copied();
         let input_type = addr
             .and_then(|addr| self.query_addr_mut(var_name, &addr))
@@ -654,12 +713,12 @@ impl Uniforms {
 
     pub fn get_texture(&self, name: &str) -> Option<&wgpu::Texture> {
         let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
-        let mut targets = groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { name, tex, .. } => (name, tex))
-        });
+        let mut targets = groups.filter_map(
+            |group| extract!(group, BindingEntry::StorageTexture { name, tex, .. } => (name, tex)),
+        );
 
         if let Some((_, tex)) = targets.find(|(targ_name, _)| targ_name.as_str() == name) {
-           Some(tex)
+            Some(tex)
         } else {
             let addr = self.lookup_table.get(name)?;
             self.sets.get(addr.set)?.get_texture(addr)
@@ -695,10 +754,13 @@ impl Uniforms {
     }
 
     pub fn get_input_mut(&mut self, name: &str) -> Option<MutInput> {
-        let out = self.push_constants.as_mut().and_then(|p| match p {
-            PushConstant::Struct { inputs, .. } => inputs.get_mut(name).map(|i| i.into()),
-            _ => None,
-        });
+        let out = self
+            .push_constants
+            .as_mut()
+            .and_then(|p| extract!(p, PushConstant::Struct { inputs, .. } => inputs.get_mut(name) ))
+            .flatten()
+            .map(|i| i.into());
+
         if out.is_some() {
             out
         } else {
@@ -709,10 +771,11 @@ impl Uniforms {
     }
 
     pub fn get_input(&self, name: &str) -> Option<&InputType> {
-        let out = self.push_constants.as_ref().and_then(|p| match p {
-            PushConstant::Struct { inputs, .. } => inputs.get(name),
-            _ => None,
-        });
+        let out = self
+            .push_constants
+            .as_ref()
+            .and_then(|p| extract!(p, PushConstant::Struct { inputs, .. } => inputs.get(name) ))
+            .flatten();
 
         if out.is_some() {
             out

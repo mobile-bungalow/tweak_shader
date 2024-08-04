@@ -910,7 +910,7 @@ impl RenderPass {
 
 #[derive(Debug)]
 struct BufferCache {
-    tex: Arc<wgpu::Texture>,
+    tex: wgpu::Texture,
     /// 256 byte aligned buffer
     buf: wgpu::Buffer,
     stride: usize,
@@ -940,11 +940,7 @@ impl BufferCache {
 
         let tex = device.create_texture(&target_desc(width, height, *format));
 
-        Self {
-            buf,
-            tex: Arc::new(tex),
-            stride,
-        }
+        Self { buf, tex, stride }
     }
 
     //TODO: allow using subsections of the buffer and texture through views
