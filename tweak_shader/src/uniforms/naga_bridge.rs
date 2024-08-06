@@ -1,6 +1,6 @@
 use super::{
-    BindingEntry, Error, ResourceBinding, Storage, StructDescriptor, TweakBindGroup,
-    DEFAULT_SAMPLER, DEFAULT_VIEW,
+    BindingEntry, Error, ResourceBinding, Storage, StorageTextureState, StructDescriptor,
+    TweakBindGroup, DEFAULT_SAMPLER, DEFAULT_VIEW,
 };
 use crate::input_type::InputType;
 use wgpu::{
@@ -102,7 +102,7 @@ impl TweakBindGroup {
                     if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
                         let pixel_size = format.block_copy_size(None).unwrap();
 
-                        let place_holder_texture = device.create_texture_with_data(
+                        let place_holder_tex = device.create_texture_with_data(
                             queue,
                             &storage_desc(1, 1, format),
                             Default::default(),
@@ -112,23 +112,48 @@ impl TweakBindGroup {
                         let mut view_desc = DEFAULT_VIEW;
                         view_desc.format = Some(format);
 
-                        let placeholder_view = place_holder_texture.create_view(&view_desc);
+                        let placeholder_view = place_holder_tex.create_view(&view_desc);
 
                         let maybe_target = document
                             .targets
                             .iter()
                             .find(|t| Some(&t.name) == uniform.name.as_ref());
 
+                        let maybe_relay = document
+                            .relays
+                            .iter()
+                            .find(|r| Some(&r.name) == uniform.name.as_ref());
+
+                        let state = match (maybe_target, maybe_relay) {
+                            (Some(targ), None) => StorageTextureState::Target {
+                                user_provided_view: None,
+                                persistent: targ.persistent,
+                            },
+                            (None, Some(relay)) => StorageTextureState::Relay {
+                                persistent: relay.persistent,
+                                target: relay.target.clone(),
+                            },
+                            (None, None) => {
+                                return Err(Error::TargetValidation(format!(
+                                    "Storage texture not found {}",
+                                    uniform.name.clone().unwrap_or_default()
+                                )))
+                            }
+                            (Some(_), Some(_)) => {
+                                return Err(Error::TargetValidation(format!(
+                                    "Storage texture referenced in both a target and a relay {}",
+                                    uniform.name.clone().unwrap_or_default()
+                                )))
+                            }
+                        };
+
                         binding_entries.push(BindingEntry::StorageTexture {
                             binding,
-                            supports_screen: maybe_target
-                                .map(|t| t.supports_screen)
-                                .unwrap_or_default(),
-                            tex: place_holder_texture,
+                            supports_screen: maybe_target.is_some(),
+                            state,
+                            tex: place_holder_tex,
                             view: placeholder_view,
-                            user_provided_view: None,
                             name: uniform.name.clone().unwrap_or_default(),
-                            persistent: maybe_target.map(|t| t.persistent).unwrap_or_default(),
                             storage,
                         });
                     } else {
@@ -347,6 +372,7 @@ pub fn storage_desc(
         format: fmt,
         usage: wgpu::TextureUsages::COPY_DST
             | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],

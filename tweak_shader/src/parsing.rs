@@ -13,6 +13,7 @@ pub struct Document {
     pub stage: wgpu::naga::ShaderStage,
     pub inputs: BTreeMap<String, crate::input_type::InputType>,
     pub passes: Vec<RenderPass>,
+    pub relays: Vec<Relay>,
     pub buffers: Vec<Buffer>,
     pub targets: Vec<Target>,
     pub samplers: Vec<SamplerDesc>,
@@ -27,8 +28,9 @@ impl Default for Document {
             buffers: vec![],
             passes: vec![],
             targets: vec![],
-            inputs: BTreeMap::new(),
             samplers: vec![],
+            relays: vec![],
+            inputs: BTreeMap::new(),
         }
     }
 }
@@ -135,15 +137,8 @@ impl FromStr for RenderPass {
 #[derive(Debug, Clone, Default)]
 pub struct Target {
     pub name: String,
-    // a texture to copy this target into in future passes
-    // this is useful because on the web textures are write only,
-    // so this may be our only option for what would otherwise
-    // be single pass renders.
-    pub forward_target: Option<String>,
     // whether or not the buffer is cleared every render
     pub persistent: bool,
-    // true if this texture supports writing to the output view.
-    pub supports_screen: bool,
     // a height, or the render height as default
     pub width: Option<u32>,
     // a width, or the render height as default
@@ -165,6 +160,47 @@ impl FromStr for Target {
         match (name_literal.as_str(), name, rest) {
             ("name", name, rest) => {
                 let target = create_target(name, rest)?;
+                Ok(target)
+            }
+            _ => Err(Error::InvalidTarget(target.into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Relay {
+    pub name: String,
+    // The target texture that this writes into
+    pub target: String,
+    // whether or not the buffer is cleared every render
+    pub persistent: bool,
+    // a height, or the render height as default
+    pub width: Option<u32>,
+    // a width, or the render height as default
+    pub height: Option<u32>,
+}
+
+impl FromStr for Relay {
+    type Err = Error;
+
+    fn from_str(target: &str) -> Result<Self, Self::Err> {
+        let (_, list) = parse_qualifier_list(target).map_err(|e| display_err(target, e))?;
+
+        let [(QVal::Id(name_literal), Some(QVal::String(name) | QVal::Id(name))), (QVal::Id(target_literal), Some(QVal::String(target_name) | QVal::Id(target_name))), rest @ ..] =
+            list.as_slice()
+        else {
+            return Err(Error::InvalidTarget(target.into()));
+        };
+
+        match (
+            name_literal.as_str(),
+            name,
+            target_literal.as_str(),
+            target_name,
+            rest,
+        ) {
+            ("name", name, "target", target_name, rest) => {
+                let target = create_relay(name, target_name, rest)?;
                 Ok(target)
             }
             _ => Err(Error::InvalidTarget(target.into())),
@@ -446,10 +482,31 @@ fn create_buffer(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Buffer
     Ok(buffer)
 }
 
+fn create_relay(
+    name: &String,
+    target: &String,
+    slice: &[(QVal, Option<QVal>)],
+) -> Result<Relay, Error> {
+    let mut relay = Relay {
+        name: name.to_owned(),
+        target: target.to_owned(),
+        persistent: false,
+        width: None,
+        height: None,
+    };
+
+    relay.height = seek::<u32>(slice, "height").transpose()?;
+    relay.width = seek::<u32>(slice, "width").transpose()?;
+
+    relay.persistent = slice
+        .iter()
+        .any(|(q, _)| matches!(q, QVal::Id(id) if id == "persistent"));
+
+    Ok(relay)
+}
+
 fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target, Error> {
     let mut pass = Target {
-        supports_screen: false,
-        forward_target: None,
         name: name.to_owned(),
         persistent: false,
         width: None,
@@ -458,11 +515,6 @@ fn create_target(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Target
 
     pass.height = seek::<u32>(slice, "height").transpose()?;
     pass.width = seek::<u32>(slice, "width").transpose()?;
-    pass.forward_target = seek::<String>(slice, "forward").transpose()?;
-
-    pass.supports_screen = slice
-        .iter()
-        .any(|(q, _)| matches!(q, QVal::Id(id) if id == "screen"));
 
     pass.persistent = slice
         .iter()

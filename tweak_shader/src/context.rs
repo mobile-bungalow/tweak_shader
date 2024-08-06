@@ -1,7 +1,8 @@
+use std::collections::HashMap;
+
 use crate::input_type::*;
 use crate::uniforms;
 use naga::front::glsl;
-use std::sync::Arc;
 use wgpu::naga;
 
 use naga::{front::glsl::Options, ShaderStage};
@@ -281,6 +282,7 @@ impl RenderContext {
         height: u32,
     ) {
         self.uniforms.map_target_views(tex);
+
         self.uniforms.clear_ephemeral_targets(command_encoder);
         // write changes to uniforms to gpu mapped buffers
         self.uniforms.update_uniform_buffers(device, queue);
@@ -759,6 +761,12 @@ impl RenderContext {
         self.uniforms.unload_texture(var)
     }
 
+    /// Iterate over the names and peristence states of the
+    /// storage texture targets in the document.
+    pub fn iter_targets(&self) -> impl Iterator<Item = uniforms::TargetDescriptor<'_>> {
+        self.uniforms.iter_targets()
+    }
+
     /// Returns true if this render context builds up
     /// a state over its runtime using persistent targets
     pub fn is_stateful(&mut self) -> bool {
@@ -909,7 +917,7 @@ impl RenderPass {
 }
 
 #[derive(Debug)]
-struct BufferCache {
+pub struct BufferCache {
     tex: wgpu::Texture,
     /// 256 byte aligned buffer
     buf: wgpu::Buffer,

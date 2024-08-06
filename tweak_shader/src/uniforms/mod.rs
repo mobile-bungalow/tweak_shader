@@ -1,11 +1,12 @@
 mod naga_bridge;
 mod validation;
 
+use std::collections::HashMap;
+
 use crate::context::{self, Targets};
 use crate::input_type::*;
 use crate::parsing::Document;
 
-use __core::default;
 use naga::{AddressSpace, ResourceBinding, StructMember};
 use naga::{FastHashMap, FastHashSet, FastIndexMap};
 pub use naga_bridge::*;
@@ -97,6 +98,9 @@ pub enum Error {
 
     #[error("Targets found with the `screen` attribute that do not have a copy compatible format with the output texture: {0:?}, must be: {1:?}")]
     TargetFormatMismatch(Vec<(wgpu::TextureFormat, String)>, wgpu::TextureFormat),
+
+    #[error("Validation error: {0}")]
+    TargetValidation(String),
 
     #[error("Unsupported uniform type: {0:?}")]
     UnsupportedUniformType(String),
@@ -254,6 +258,13 @@ impl Uniforms {
             usage: BufferUsages::COPY_SRC,
         });
 
+        let first_target = sets.iter()
+            .map(|s| s.binding_entries.iter())
+            .flatten()
+            .find_map(|t| 
+                extract!(t, BindingEntry::StorageTexture {  state: StorageTextureState::Target { .. }, name, .. } => name.clone())
+            );
+
         let out = Self {
             pass_indices,
             push_constants,
@@ -264,7 +275,7 @@ impl Uniforms {
             format: *format,
             place_holder_texture,
             utility_block_data,
-            default_compute_texture: None,
+            default_compute_texture: first_target,
         };
 
         out.validate(document, format)?;
@@ -277,10 +288,12 @@ impl Uniforms {
             .lookup_table
             .get(name)
             .ok_or(Error::NonexistantTarget(name.to_owned()))?;
+
         let set = self
             .sets
             .get(addr.set)
             .ok_or(Error::NonexistantTarget(name.to_owned()))?;
+
         if let Some(BindingEntry::StorageTexture {
             supports_screen, ..
         }) = set.binding_entries.get(addr.binding)
@@ -415,6 +428,37 @@ impl Uniforms {
         }
     }
 
+    pub fn adjust_storage_texture_sizes<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        targets: &Targets<'a>,
+    ) {
+        match targets {
+            Targets::One(_) => {
+                let groups = self
+                    .sets
+                    .iter_mut()
+                    .map(|e| e.binding_entries.iter_mut())
+                    .flatten();
+
+                for group in groups {
+                    if let BindingEntry::StorageTexture {
+                        name, tex, view, ..
+                    } = group
+                    {
+                        if Some(&*name) == self.default_compute_texture.as_ref() {
+                            continue;
+                        }
+                    }
+                }
+            }
+            Targets::Many(v) => todo!(),
+        }
+    }
+
     // replace the views in the storage textures with those
     // proved by the target set.
     // TODO: this function is really ugly. it will do for now
@@ -435,20 +479,19 @@ impl Uniforms {
 
                 let user_view = groups.find_map(|group| {
                     if let BindingEntry::StorageTexture {
-                        user_provided_view,
+                        state:
+                            StorageTextureState::Target {
+                                user_provided_view, ..
+                            },
                         name,
                         supports_screen: true,
                         ..
                     } = group
                     {
-                        if let Some(default_name) = self.default_compute_texture.as_ref() {
-                            if default_name == name {
-                                Some(user_provided_view)
-                            } else {
-                                None
-                            }
-                        } else {
+                        if Some(&*name) == self.default_compute_texture.as_ref() {
                             Some(user_provided_view)
+                        } else {
+                            None
                         }
                     } else {
                         None
@@ -471,7 +514,10 @@ impl Uniforms {
                     for group in groups {
                         match group {
                             BindingEntry::StorageTexture {
-                                user_provided_view,
+                                state:
+                                    StorageTextureState::Target {
+                                        user_provided_view, ..
+                                    },
                                 name,
                                 ..
                             } => {
@@ -497,7 +543,10 @@ impl Uniforms {
 
         groups.for_each(|group| match group {
             BindingEntry::StorageTexture {
-                ref mut user_provided_view,
+                state:
+                    StorageTextureState::Target {
+                        user_provided_view, ..
+                    },
                 ..
             } => *user_provided_view = None,
             _ => {}
@@ -510,7 +559,7 @@ impl Uniforms {
         let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
 
         let views = groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { view, user_provided_view, persistent: false, .. } 
+            extract!(group, BindingEntry::StorageTexture { view, state: StorageTextureState::Target { persistent: false, user_provided_view, .. }, .. } 
                         => user_provided_view.as_ref().unwrap_or(view) )
         });
 
@@ -540,7 +589,15 @@ impl Uniforms {
     pub fn iter_targets<'a>(&'a self) -> impl Iterator<Item = TargetDescriptor<'a>> {
         let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
         groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { name, tex, persistent, .. } 
+            extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Target { persistent, .. }, .. } 
+                    => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
+        })
+    }
+
+    pub fn iter_relays<'a>(&'a self) -> impl Iterator<Item = TargetDescriptor<'a>> {
+        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+        groups.filter_map(|group| {
+            extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Relay { persistent, .. }, .. } 
                     => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
         })
     }
@@ -920,6 +977,19 @@ pub enum Storage {
 }
 
 #[derive(Debug)]
+pub enum StorageTextureState {
+    Relay {
+        // the target texture to forward this into after each pass
+        target: String,
+        persistent: bool,
+    },
+    Target {
+        user_provided_view: Option<wgpu::TextureView>,
+        persistent: bool,
+    },
+}
+
+#[derive(Debug)]
 pub enum BindingEntry {
     UtilityUniformBlock {
         binding: u32,
@@ -946,10 +1016,9 @@ pub enum BindingEntry {
     StorageTexture {
         // the binding index , might not be contiguous
         binding: u32,
-        // texture resource if not default
         tex: wgpu::Texture,
         view: wgpu::TextureView,
-        user_provided_view: Option<wgpu::TextureView>,
+        state: StorageTextureState,
         // variable name
         name: String,
         // storage location
@@ -957,7 +1026,6 @@ pub enum BindingEntry {
         // can be copied to view
         supports_screen: bool,
         // whether or not this is cleared after every render.
-        persistent: bool,
     },
     Texture {
         // the binding index , might not be contiguous
@@ -1003,6 +1071,7 @@ impl BindingEntry {
             binding,
             members,
         } = desc;
+
         // if this is the utility block make sure it lines
         // up then return it.
         if document
@@ -1427,15 +1496,29 @@ impl TweakBindGroup {
                 BindingEntry::StorageTexture {
                     binding,
                     view,
-                    user_provided_view,
+                    state,
                     ..
                 } => {
-                    out.push(wgpu::BindGroupEntry {
-                        binding: *binding,
-                        resource: wgpu::BindingResource::TextureView(
-                            user_provided_view.as_ref().unwrap_or(view),
-                        ),
-                    });
+                    match state {
+                        StorageTextureState::Relay { target, persistent } => {
+                            out.push(wgpu::BindGroupEntry {
+                                binding: *binding,
+                                resource: wgpu::BindingResource::TextureView(&*view),
+                            });
+                        }
+                        StorageTextureState::Target {
+                            user_provided_view,
+                            persistent,
+                            ..
+                        } => {
+                            out.push(wgpu::BindGroupEntry {
+                                binding: *binding,
+                                resource: wgpu::BindingResource::TextureView(
+                                    user_provided_view.as_ref().unwrap_or(&*view),
+                                ),
+                            });
+                        }
+                    };
                 }
             }
         }
