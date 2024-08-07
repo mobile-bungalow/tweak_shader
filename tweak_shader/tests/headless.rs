@@ -831,15 +831,32 @@ fn compute_targets() {
 
 const COMPUTE_BASIC: &str = r#"
 #version 450
-
-#pragma tweak_shader(version=1.0)
+#pragma tweak_shader(version="1.0")
 #pragma stage(compute)
 
-layout(set=0, binding=1) uniform sampler default_sampler;
+#pragma input(float, name=blue, default=0.0, min=0.0, max=1.0)
+layout(set=1, binding=0) uniform custom_inputs {
+    float blue;
+};
+
+#pragma target(name="output_image", screen)
+layout(rgba8, set=0, binding=1) uniform writeonly image2D output_image;
+
+#pragma target(name="screen_two", screen)
+layout(rgba8, set=0, binding=2) uniform writeonly image2D screen_two;
 
 layout(local_size_x = 16, local_size_y = 16) in;
 void main() {
-
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 image_size = imageSize(output_image);
+    
+    vec2 normalized_coords = vec2(pixel_coords) / vec2(image_size);
+    
+    vec4 color = vec4(normalized_coords.x, normalized_coords.y, blue, 1.0);
+    
+    vec4 inverse = vec4(vec3(1.0) - color.xyz, 1.0);
+    imageStore(output_image, pixel_coords, color);
+    imageStore(screen_two, pixel_coords, inverse);
 }
 "#;
 
@@ -847,13 +864,29 @@ void main() {
 fn compute_basic() {
     let (device, queue) = set_up_wgpu();
 
-    let basic = RenderContext::new(
+    let mut basic = RenderContext::new(
         COMPUTE_BASIC,
         wgpu::TextureFormat::Rgba8Unorm,
         &device,
         &queue,
     )
     .unwrap();
+
+    let grad_1 = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    basic.set_compute_target("screen_two").unwrap();
+
+    let grad_2 = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    assert!(approximately_equivalent(
+        &grad_1,
+        &png_pixels!("./resources/basic_compute.png")
+    ));
+
+    assert!(approximately_equivalent(
+        &grad_2,
+        &png_pixels!("./resources/basic_compute_grad_2.png")
+    ));
 }
 
 const COMPUTE_MULTIPASS: &str = r#"
@@ -862,11 +895,42 @@ const COMPUTE_MULTIPASS: &str = r#"
 #pragma tweak_shader(version=1.0)
 #pragma stage(compute)
 
-layout(set=0, binding=1) uniform sampler default_sampler;
+#pragma utility_block(ShaderInputs)
+layout(push_constant) uniform ShaderInputs {
+    float time;       
+    float time_delta; 
+    float frame_rate; 
+    uint frame_index;  
+    vec4 mouse;       
+    vec4 date;        
+    vec3 resolution;  
+    uint pass_index;   
+};
+
+#pragma target(name="output_image", screen)
+layout(rgba8, set=0, binding=1) uniform writeonly image2D output_image;
+
+#pragma pass(0)
+#pragma relay(name="relay", target="relay_target")
+layout(rgba8, set=0, binding=2) uniform writeonly image2D relay;
+layout(set=0, binding=3) uniform texture2D relay_target;
 
 layout(local_size_x = 16, local_size_y = 16) in;
 void main() {
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 image_size = imageSize(output_image);
+    
+    vec2 normalized_coords = vec2(pixel_coords) / vec2(image_size);
+    
+    vec4 color = vec4(normalized_coords.x, normalized_coords.y, 1.0, 1.0);
+    vec4 mask = texelFetch(relay_target, pixel_coords, 0);
+    float center_circle = step(length(normalized_coords - vec2(0.5)), 0.2);
 
+    if (pass_index == 0) {
+        imageStore(relay, pixel_coords, vec4(center_circle));
+    } else {
+        imageStore(output_image, pixel_coords, mask * color);
+    }
 }
 "#;
 
@@ -874,40 +938,20 @@ void main() {
 fn compute_multipass() {
     let (device, queue) = set_up_wgpu();
 
-    let multipass = RenderContext::new(
+    let mut multipass = RenderContext::new(
         COMPUTE_MULTIPASS,
         wgpu::TextureFormat::Rgba8Unorm,
         &device,
         &queue,
     )
     .unwrap();
-}
 
-const COMPUTE_MULTITARGET: &str = r#"
-#version 450
+    let img = multipass.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
-#pragma tweak_shader(version=1.0)
-#pragma stage(compute)
-
-layout(set=0, binding=1) uniform sampler default_sampler;
-
-layout(local_size_x = 16, local_size_y = 16) in;
-void main() {
-
-}
-"#;
-
-#[test]
-fn compute_multitarget() {
-    let (device, queue) = set_up_wgpu();
-
-    let multitarg = RenderContext::new(
-        COMPUTE_MULTITARGET,
-        wgpu::TextureFormat::Rgba8Unorm,
-        &device,
-        &queue,
-    )
-    .unwrap();
+    assert!(approximately_equivalent(
+        &img,
+        &png_pixels!("./resources/multipass_compute.png")
+    ));
 }
 
 const NO_EXCESS: &str = r#"

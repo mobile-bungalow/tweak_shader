@@ -110,9 +110,10 @@ impl RenderContext {
         )?;
 
         let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
+        let is_compute = document.stage == ShaderStage::Compute;
 
         let push_constant_ranges = uniforms
-            .push_constant_ranges()
+            .push_constant_ranges(is_compute)
             .map(|e| vec![e])
             .unwrap_or(vec![]);
 
@@ -122,7 +123,7 @@ impl RenderContext {
             push_constant_ranges: &push_constant_ranges,
         });
 
-        let pipeline = if document.stage == ShaderStage::Compute {
+        let pipeline = if is_compute {
             let compute_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
                 source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
@@ -207,7 +208,14 @@ impl RenderContext {
             uniforms,
             pipeline,
             passes: pass_structure,
-            screen_buffer_cache: BufferCache::new(&format, 1, 1, None, device),
+            screen_buffer_cache: BufferCache::new(
+                &format,
+                1,
+                1,
+                None,
+                device,
+                document.stage == wgpu::naga::ShaderStage::Compute,
+            ),
             stage: document.stage,
         })
     }
@@ -257,7 +265,7 @@ impl RenderContext {
                         .supports_render(&fmt, width, height, None)
                     {
                         self.screen_buffer_cache =
-                            BufferCache::new(&fmt, width, height, None, device);
+                            BufferCache::new(&fmt, width, height, None, device, self.is_compute());
                     };
 
                     self.screen_buffer_cache
@@ -279,15 +287,16 @@ impl RenderContext {
         width: u32,
         height: u32,
     ) {
-        self.uniforms
-            .adjust_storage_texture_sizes(device, queue, width, height);
-
         if let Some(view) = target {
             self.uniforms.map_target_view(view);
         }
 
         self.uniforms
+            .adjust_storage_texture_sizes(device, queue, width, height);
+
+        self.uniforms
             .clear_ephemeral_targets_and_buffers(command_encoder);
+
         // write changes to uniforms to gpu mapped buffers
         self.uniforms.update_uniform_buffers(device, queue);
 
@@ -598,8 +607,23 @@ impl RenderContext {
             .block_copy_size(Some(wgpu::TextureAspect::All))
             .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
+        let fmt = self.uniforms.format();
+
+        if !self
+            .screen_buffer_cache
+            .supports_render(&fmt, width, height, None)
+        {
+            self.screen_buffer_cache =
+                BufferCache::new(&fmt, width, height, None, device, self.is_compute());
+        };
+
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
+
         let mut command_encoder = device.create_command_encoder(&Default::default());
-        self.render(queue, device, &mut command_encoder, None, width, height);
+        self.render(queue, device, &mut command_encoder, view, width, height);
         queue.submit(Some(command_encoder.finish()));
 
         let mut out = vec![0; (width * height * block_size) as usize];
@@ -633,8 +657,23 @@ impl RenderContext {
         slice: &mut [u8],
         stride: Option<u32>,
     ) {
+        let fmt = self.uniforms.format();
+
+        if !self
+            .screen_buffer_cache
+            .supports_render(&fmt, width, height, None)
+        {
+            self.screen_buffer_cache =
+                BufferCache::new(&fmt, width, height, None, device, self.is_compute());
+        };
+
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
+
         let mut command_encoder = device.create_command_encoder(&Default::default());
-        self.render(queue, device, &mut command_encoder, None, width, height);
+        self.render(queue, device, &mut command_encoder, view, width, height);
         queue.submit(Some(command_encoder.finish()));
 
         read_texture_contents_to_slice(
@@ -664,6 +703,7 @@ impl RenderContext {
         {
             return;
         }
+        let compute = self.is_compute();
 
         for pass in self.passes.iter_mut() {
             let Some(target) = pass.pass_target_var_name.clone() else {
@@ -680,8 +720,12 @@ impl RenderContext {
                     pass.target_format,
                 ));
 
-                let new_target =
-                    device.create_texture(&target_desc(new_width, new_height, pass.target_format));
+                let new_target = device.create_texture(&target_desc(
+                    new_width,
+                    new_height,
+                    pass.target_format,
+                    compute,
+                ));
 
                 if let Some((old_target, _)) = pass.render_target_texture.as_ref() {
                     let min_width = u32::min(new_width, old_target.width());
@@ -901,6 +945,7 @@ impl BufferCache {
         height: u32,
         stride: Option<usize>,
         device: &wgpu::Device,
+        compute: bool,
     ) -> Self {
         let block_size = format
             .block_copy_size(Some(wgpu::TextureAspect::All))
@@ -916,7 +961,7 @@ impl BufferCache {
             mapped_at_creation: false,
         });
 
-        let tex = device.create_texture(&target_desc(width, height, *format));
+        let tex = device.create_texture(&target_desc(width, height, *format, compute));
 
         Self { buf, tex, stride }
     }
@@ -1001,8 +1046,22 @@ fn render_pass_result_desc(
 }
 
 // template for targets written to by the gpu
-fn target_desc(width: u32, height: u32, format: TextureFormat) -> wgpu::TextureDescriptor<'static> {
+fn target_desc(
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    compute: bool,
+) -> wgpu::TextureDescriptor<'static> {
+    let mut usage = wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::COPY_SRC;
+
+    if compute {
+        usage |= wgpu::TextureUsages::STORAGE_BINDING;
+    }
+
     wgpu::TextureDescriptor {
+        usage,
         label: None,
         size: wgpu::Extent3d {
             width,
@@ -1013,9 +1072,6 @@ fn target_desc(width: u32, height: u32, format: TextureFormat) -> wgpu::TextureD
         sample_count: 1, // crunch crunch
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::COPY_DST
-            | wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     }
 }

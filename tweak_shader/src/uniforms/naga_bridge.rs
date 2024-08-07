@@ -89,9 +89,6 @@ impl TweakBindGroup {
 
                     layout_entries.push(entry);
                 }
-                naga::TypeInner::Array { base, size, stride } => {
-                    todo!();
-                }
                 naga::TypeInner::Image {
                     dim,
                     arrayed,
@@ -229,7 +226,7 @@ impl TweakBindGroup {
 
                     layout_entries.push(entry);
                 }
-                e => panic!("This type should not be in a glsl 440+ uniform: {e:?}"),
+                t => return Err(Error::UnsupportedUniformType(format!("{t:?}"))),
             }
         }
 

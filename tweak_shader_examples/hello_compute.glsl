@@ -1,8 +1,8 @@
 #version 450
 #pragma tweak_shader(version="1.0")
 #pragma stage(compute)
-#pragma input(float, name=blue, default=0.0, min=0.0, max=1.0)
 
+#pragma input(float, name=blue, default=0.0, min=0.0, max=1.0)
 layout(set=1, binding=0) uniform custom_inputs {
     float blue;
 };

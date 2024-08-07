@@ -15,7 +15,7 @@ use wgpu::{util::DeviceExt, BufferUsages};
 
 use crate::VarName;
 use thiserror::Error;
-use wgpu::{BindGroupLayout, ShaderStages};
+use wgpu::BindGroupLayout;
 
 macro_rules! extract {
     ($expression:expr, $(
@@ -443,7 +443,6 @@ impl Uniforms {
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let mut pass_jobs = vec![];
-
         for target in groups {
             if let BindingEntry::StorageTexture {
                 tex,
@@ -465,8 +464,12 @@ impl Uniforms {
                 tex,
                 view,
                 state:
-                    StorageTextureState::Target { width, height, .. }
-                    | StorageTextureState::Relay { width, height, .. },
+                    StorageTextureState::Target {
+                        width,
+                        height,
+                        user_provided_view: None,
+                        ..
+                    },
                 ..
             } = target
             {
@@ -684,14 +687,18 @@ impl Uniforms {
         }
     }
 
-    pub fn push_constant_ranges(&self) -> Option<wgpu::PushConstantRange> {
+    pub fn push_constant_ranges(&self, compute: bool) -> Option<wgpu::PushConstantRange> {
         if let Some(push) = self.push_constants.as_ref() {
             let size = match push {
                 PushConstant::UtilityBlock { .. } => std::mem::size_of::<GlobalData>(),
                 PushConstant::Struct { backing, .. } => backing.len(),
             };
             Some(wgpu::PushConstantRange {
-                stages: ShaderStages::VERTEX_FRAGMENT,
+                stages: if compute {
+                    wgpu::ShaderStages::COMPUTE
+                } else {
+                    wgpu::ShaderStages::VERTEX_FRAGMENT
+                },
                 range: 0..size as u32,
             })
         } else {
