@@ -446,6 +446,7 @@ impl Uniforms {
         for target in groups {
             if let BindingEntry::StorageTexture {
                 tex,
+                view,
                 state:
                     StorageTextureState::Relay {
                         target: tname,
@@ -456,6 +457,19 @@ impl Uniforms {
                 ..
             } = target
             {
+                let new_tex = resize_texture(
+                    device,
+                    &mut encoder,
+                    &tex,
+                    width.unwrap_or(screen_width),
+                    height.unwrap_or(screen_height),
+                );
+
+                if let Some(new_tex) = new_tex {
+                    *view = new_tex.create_view(&Default::default());
+                    *tex = new_tex;
+                }
+
                 pass_jobs.push((tex.format(), tname.clone(), width.clone(), height.clone()));
             }
 
@@ -582,6 +596,7 @@ impl Uniforms {
         });
 
         for (target, tex) in relay_textures {
+
             let Some(target_tex) = self.get_texture(target) else {
                 continue;
             };
