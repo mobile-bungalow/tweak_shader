@@ -196,7 +196,7 @@ impl App {
         Ok(Self {
             texture_jobs: vec![],
             must_update_render_targets: false,
-            output_texture: output_texture.into(),
+            output_texture,
             letter_box,
             messages,
             video_streams: BTreeMap::new(),
@@ -470,7 +470,7 @@ impl App {
             self.letter_box
                 .load_shared_texture(&output_texture, "image");
 
-            self.output_texture = output_texture.into();
+            self.output_texture = output_texture;
         }
     }
 

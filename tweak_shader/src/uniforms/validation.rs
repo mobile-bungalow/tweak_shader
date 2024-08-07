@@ -75,8 +75,7 @@ impl Uniforms {
         let mismatch_target_textures: Vec<_> = self
             .sets
             .iter()
-            .map(|binding| binding.binding_entries.iter())
-            .flatten()
+            .flat_map(|binding| binding.binding_entries.iter())
             .filter_map(|b| {
                 if let BindingEntry::StorageTexture {
                     tex,
@@ -96,7 +95,7 @@ impl Uniforms {
         if !mismatch_target_textures.is_empty() {
             Err(Error::TargetFormatMismatch(
                 mismatch_target_textures,
-                format.clone(),
+                *format,
             ))?;
         }
 

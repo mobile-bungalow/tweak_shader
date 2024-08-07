@@ -362,7 +362,7 @@ impl RenderContext {
                 let mut rpass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &tex_view,
+                        view: tex_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: pass.get_load_op(),

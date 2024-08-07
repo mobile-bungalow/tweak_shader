@@ -260,8 +260,7 @@ impl Uniforms {
         });
 
         let first_target = sets.iter()
-            .map(|s| s.binding_entries.iter())
-            .flatten()
+            .flat_map(|s| s.binding_entries.iter())
             .find_map(|t| 
                 extract!(t, BindingEntry::StorageTexture {  state: StorageTextureState::Target { .. }, name, .. } => name.clone())
             );
@@ -438,8 +437,7 @@ impl Uniforms {
         let groups = self
             .sets
             .iter_mut()
-            .map(|e| e.binding_entries.iter_mut())
-            .flatten();
+            .flat_map(|e| e.binding_entries.iter_mut());
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let mut pass_jobs = vec![];
@@ -460,7 +458,7 @@ impl Uniforms {
                 let new_tex = resize_texture(
                     device,
                     &mut encoder,
-                    &tex,
+                    tex,
                     width.unwrap_or(screen_width),
                     height.unwrap_or(screen_height),
                 );
@@ -470,7 +468,7 @@ impl Uniforms {
                     *tex = new_tex;
                 }
 
-                pass_jobs.push((tex.format(), tname.clone(), width.clone(), height.clone()));
+                pass_jobs.push((tex.format(), tname.clone(), *width, *height));
             }
 
             if let BindingEntry::StorageTexture {
@@ -494,7 +492,7 @@ impl Uniforms {
                 let new_tex = resize_texture(
                     device,
                     &mut encoder,
-                    &tex,
+                    tex,
                     width.unwrap_or(screen_width),
                     height.unwrap_or(screen_height),
                 );
@@ -513,8 +511,7 @@ impl Uniforms {
             let mut groups = self
                 .sets
                 .iter_mut()
-                .map(|e| e.binding_entries.iter_mut())
-                .flatten();
+                .flat_map(|e| e.binding_entries.iter_mut());
 
             let Some((tex, view)) = groups.find_map(|entry| match entry {
                 BindingEntry::Texture {
@@ -535,7 +532,7 @@ impl Uniforms {
             let tex = tex.as_mut().unwrap();
             let view = view.as_mut().unwrap();
 
-            let new_tex = resize_texture(device, &mut encoder, &tex, width, height);
+            let new_tex = resize_texture(device, &mut encoder, tex, width, height);
 
             if let Some(new_tex) = new_tex {
                 *view = new_tex.create_view(&Default::default());
@@ -552,13 +549,12 @@ impl Uniforms {
         let mut groups = self
             .sets
             .iter_mut()
-            .map(|e| {
+            .flat_map(|e| {
                 //TODO: this is hacky! only rebind if needed
                 // and certainly not as a side effect of a map
                 e.needs_rebind = true;
                 e.binding_entries.iter_mut()
-            })
-            .flatten();
+            });
 
         let user_view = groups.find_map(|group| {
             if let BindingEntry::StorageTexture {
@@ -589,7 +585,7 @@ impl Uniforms {
     }
 
     pub fn forward_relays(&self, command_encoder: &mut wgpu::CommandEncoder) {
-        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+        let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
 
         let relay_textures = groups.filter_map(|group| {
             extract!(group, BindingEntry::StorageTexture { tex, state: StorageTextureState::Relay { target,.. }, .. } => (target, tex))
@@ -616,11 +612,9 @@ impl Uniforms {
         let groups = self
             .sets
             .iter_mut()
-            .map(|e| e.binding_entries.iter_mut())
-            .flatten();
+            .flat_map(|e| e.binding_entries.iter_mut());
 
-        groups.for_each(|group| match group {
-            BindingEntry::StorageTexture {
+        groups.for_each(|group| if let BindingEntry::StorageTexture {
                 state:
                     StorageTextureState::Target {
                         user_provided_view,
@@ -628,9 +622,7 @@ impl Uniforms {
                         ..
                     },
                 ..
-            } => *user_provided_view = previous_view.take(),
-            _ => {}
-        });
+            } = group { *user_provided_view = previous_view.take() });
     }
 
     // zero the textures of any targets
@@ -639,7 +631,7 @@ impl Uniforms {
         &mut self,
         command_encoder: &mut wgpu::CommandEncoder,
     ) {
-        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+        let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
 
         let views = groups.filter_map(|group| match group {
             BindingEntry::StorageTexture {
@@ -667,7 +659,7 @@ impl Uniforms {
             command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Clear Texture Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ephemeral_view,
+                    view: ephemeral_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -686,8 +678,8 @@ impl Uniforms {
         }
     }
 
-    pub fn iter_targets<'a>(&'a self) -> impl Iterator<Item = TargetDescriptor<'a>> {
-        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+    pub fn iter_targets(&self) -> impl Iterator<Item = TargetDescriptor<'_>> {
+        let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
         groups.filter_map(|group| {
             extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Target { persistent, .. }, .. } 
                     => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
@@ -847,7 +839,7 @@ impl Uniforms {
     }
 
     pub fn get_texture(&self, name: &str) -> Option<&wgpu::Texture> {
-        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+        let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
         let mut targets = groups.filter_map(
             |group| extract!(group, BindingEntry::StorageTexture { name, tex, .. } => (name, tex)),
         );
@@ -1018,7 +1010,7 @@ pub fn sets(
     // collect all set indices, find the max then create bind sets contiguous up to max.
     // some might be empty.
     (0..=max_set_index)
-        .map(|set| TweakBindGroup::new_from_naga(set, &module, &document, device, queue, &format))
+        .map(|set| TweakBindGroup::new_from_naga(set, module, document, device, queue, format))
         .collect::<Result<_, _>>()
 }
 
