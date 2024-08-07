@@ -1170,7 +1170,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
     (d, q)
 }
 use image::{ImageBuffer, ImageFormat, Rgba};
-use wgpu::{util::DeviceExt, TextureFormat};
+use wgpu::util::DeviceExt;
 
 fn approximately_equivalent(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len()

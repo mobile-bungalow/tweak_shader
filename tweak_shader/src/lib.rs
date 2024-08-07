@@ -1,5 +1,6 @@
-#[doc = include!("../ReadMe.md")]
+#[doc = include_str!("../ReadMe.md")]
 pub(crate) mod context;
+
 pub(crate) mod parsing;
 pub(crate) mod uniforms;
 

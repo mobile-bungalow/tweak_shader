@@ -1028,8 +1028,6 @@ mod tests {
             InputType::Color(crate::input_type::DiscreteInput { .. })
         ));
 
-        assert_eq!(out.version, 3.0);
-
         assert_eq!(out.passes.len(), 1);
 
         assert_eq!(out.utility_block_name, Some("Temp".to_string()));

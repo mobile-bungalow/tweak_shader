@@ -596,7 +596,6 @@ impl Uniforms {
         });
 
         for (target, tex) in relay_textures {
-
             let Some(target_tex) = self.get_texture(target) else {
                 continue;
             };
@@ -642,9 +641,26 @@ impl Uniforms {
     ) {
         let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
 
-        let views = groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { view, state: StorageTextureState::Target { persistent: false, user_provided_view, .. }, .. } 
-                        => user_provided_view.as_ref().unwrap_or(view) )
+        let views = groups.filter_map(|group| match group {
+            BindingEntry::StorageTexture {
+                view,
+                state:
+                    StorageTextureState::Target {
+                        persistent: false,
+                        user_provided_view,
+                        ..
+                    },
+                ..
+            } => Some(user_provided_view.as_ref().unwrap_or(view)),
+            BindingEntry::StorageTexture {
+                view,
+                state:
+                    StorageTextureState::Relay {
+                        persistent: false, ..
+                    },
+                ..
+            } => Some(view),
+            _ => None,
         });
 
         for ephemeral_view in views {
@@ -1388,7 +1404,7 @@ impl TweakBindGroup {
             Some(BindingEntry::StorageTexture {
                 state:
                     StorageTextureState::Target {
-                        user_provided_view, ..
+                    ..
                     },
                 ..
             }) => true,
@@ -1571,18 +1587,14 @@ impl TweakBindGroup {
                     ..
                 } => {
                     match state {
-                        StorageTextureState::Relay {
-                            target, persistent, ..
-                        } => {
+                        StorageTextureState::Relay { .. } => {
                             out.push(wgpu::BindGroupEntry {
                                 binding: *binding,
                                 resource: wgpu::BindingResource::TextureView(&*view),
                             });
                         }
                         StorageTextureState::Target {
-                            user_provided_view,
-                            persistent,
-                            ..
+                            user_provided_view, ..
                         } => {
                             out.push(wgpu::BindGroupEntry {
                                 binding: *binding,
