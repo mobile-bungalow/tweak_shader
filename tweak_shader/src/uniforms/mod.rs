@@ -427,7 +427,7 @@ impl Uniforms {
         }
     }
 
-    pub fn adjust_storage_texture_sizes<'a>(
+    pub fn adjust_storage_texture_sizes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -545,7 +545,7 @@ impl Uniforms {
 
     // replace the views in the storage textures with those
     // proved by the target set.
-    pub fn map_target_view<'a>(&mut self, substitute_view: wgpu::TextureView) {
+    pub fn map_target_view(&mut self, substitute_view: wgpu::TextureView) {
         let mut groups = self
             .sets
             .iter_mut()
