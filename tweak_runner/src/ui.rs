@@ -47,6 +47,7 @@ pub struct UiState {
     pub current_loaded_files: BTreeMap<String, String>,
     pub notifications: Vec<String>,
     pub toasts: Toasts,
+    pub compute_target: usize,
 }
 
 impl UiState {
@@ -56,7 +57,7 @@ impl UiState {
 }
 
 pub fn side_panel(
-    isf_ctx: &mut tweak_shader::RenderContext,
+    render_ctx: &mut tweak_shader::RenderContext,
     message_sender: &mpsc::Sender<RunnerMessage>,
     ui_state: &mut UiState,
     ctx: &egui_winit::egui::Context,
@@ -82,7 +83,36 @@ pub fn side_panel(
                     }
                 });
 
-                let mut inputs = isf_ctx.iter_inputs_mut().collect::<Vec<_>>();
+                if render_ctx.is_compute() {
+                    let name = render_ctx
+                        .iter_targets()
+                        .nth(ui_state.compute_target)
+                        .unwrap()
+                        .name;
+
+                    let names = render_ctx.iter_targets().enumerate();
+
+                    let before = ui_state.compute_target;
+                    egui_winit::egui::ComboBox::from_label("Current Target")
+                        .selected_text(name)
+                        .show_ui(ui, |ui| {
+                            for (idx, targ) in names {
+                                ui.selectable_value(&mut ui_state.compute_target, idx, targ.name);
+                            }
+                        });
+                    if before != ui_state.compute_target {
+                        let targ = render_ctx
+                            .iter_targets()
+                            .nth(ui_state.compute_target)
+                            .unwrap()
+                            .name
+                            .to_owned();
+
+                        let _ = render_ctx.set_compute_target(&targ);
+                    }
+                }
+
+                let mut inputs = render_ctx.iter_inputs_mut().collect::<Vec<_>>();
 
                 inputs.sort_by(|(_, a), (_, b)| (a.variant() as u32).cmp(&(b.variant() as u32)));
 

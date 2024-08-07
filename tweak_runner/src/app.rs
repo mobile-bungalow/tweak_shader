@@ -77,7 +77,6 @@ pub(crate) struct App {
     status: AppStatus,
     // the target texture for the main context
     output_texture: wgpu::Texture,
-    output_format: wgpu::TextureFormat,
     // dirty textures specified by bytes of the next frame and binding location
     // We build the new ctx here before moving it into current_isf_ctx
     temp_isf_ctx: Cell<Option<Result<RenderContext, RunnerError>>>,
@@ -212,7 +211,6 @@ impl App {
             start_time,
             last_frame,
             shader_path: shader_path.to_owned(),
-            output_format,
             gui_context,
             ui_state,
         })

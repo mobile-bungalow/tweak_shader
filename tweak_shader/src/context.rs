@@ -404,6 +404,7 @@ impl RenderContext {
             }
 
             self.uniforms.forward_relays(command_encoder);
+
             // copy the render pass target over to the
             // texture that is used in the pipeline
             if let Some((target_tex, _)) = pass.render_target_texture.as_ref() {
