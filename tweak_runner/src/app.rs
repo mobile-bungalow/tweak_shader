@@ -2,13 +2,10 @@ use crate::initialization::GuiContext;
 use crate::read_file;
 use crate::ui;
 use crate::ui::UiState;
+use crate::video::{VideoLoader, VideoLoaderTrait};
 
 use chrono::{Datelike, Local, Timelike};
 
-#[cfg(feature = "audio")]
-use tweak_shader::audio::AudioLoader;
-#[cfg(feature = "video")]
-use tweak_shader::video::VideoLoader;
 use tweak_shader::Error;
 use tweak_shader::RenderContext;
 
@@ -22,78 +19,12 @@ use std::path::PathBuf;
 
 use egui_wgpu::wgpu;
 
-// Monkey traits are bad but this will work for now
-#[cfg(not(feature = "video"))]
-mod dummy_video {
-    use std::sync::{Arc, Mutex};
-
-    pub struct VideoLoader;
-
-    impl VideoLoader {
-        pub fn init<P: AsRef<std::path::Path>>(_path: P) -> Result<Self, &'static str> {
-            Err("Compiled without the video feature!")
-        }
-        pub fn present(&self) -> Option<Arc<Mutex<Vec<u8>>>> {
-            unreachable!()
-        }
-        pub fn width(&self) -> u32 {
-            unreachable!()
-        }
-        pub fn height(&self) -> u32 {
-            unreachable!()
-        }
-    }
-}
-
-#[cfg(not(feature = "video"))]
-use dummy_video::VideoLoader;
-
-#[cfg(not(feature = "audio"))]
-mod dummy_audio {
-    use std::sync::{Arc, Mutex};
-
-    pub struct AudioLoader;
-
-    impl AudioLoader {
-        pub fn new<P: AsRef<std::path::Path>>(
-            _path: P,
-            _fft: bool,
-            _max_samples: Option<u32>,
-        ) -> Result<Self, &'static str> {
-            Err("Compiled without the Audio feature!")
-        }
-        pub fn present(&self) -> Arc<Mutex<Vec<f32>>> {
-            unreachable!()
-        }
-        pub fn samples(&self) -> usize {
-            unreachable!()
-        }
-
-        pub fn play(&self) {
-            unreachable!()
-        }
-
-        pub fn pause(&self) {
-            unreachable!()
-        }
-        pub fn channels(&self) -> u16 {
-            unreachable!()
-        }
-    }
-}
-
-#[cfg(not(feature = "audio"))]
-use dummy_audio::AudioLoader;
-
 #[derive(Debug)]
 enum RunnerError {
     Validation(String),
     MissingFile,
     Shader(Error),
-    #[cfg(feature = "video")]
-    Video(tweak_shader::video::VideoLoaderErr),
-    #[cfg(not(feature = "video"))]
-    Video(&'static str),
+    Video(String),
     Image(String),
 }
 
@@ -113,43 +44,19 @@ impl std::fmt::Display for RunnerError {
 pub enum RunnerMessage {
     MouseDown,
     MouseUp,
-    MouseMove {
-        x: f64,
-        y: f64,
-        w: f64,
-        h: f64,
-    },
+    MouseMove { x: f64, y: f64, w: f64, h: f64 },
     WatchedFileChanged,
     WatchedFileDeleted,
-    UnloadAudio {
-        var: String,
-    },
-    LoadAudio {
-        var: String,
-        path: PathBuf,
-        fft: bool,
-        max_samples: Option<u32>,
-    },
-    UnloadImage {
-        var: String,
-    },
-    LoadImage {
-        var: String,
-        path: PathBuf,
-    },
+    UnloadImage { var: String },
+    LoadImage { var: String, path: PathBuf },
     ValidationError(String),
     RenderFinished,
-    Resized {
-        width: f32,
-        height: f32,
-    },
+    Resized { width: f32, height: f32 },
     ScreenShot(PathBuf),
     AspectChanged,
     ToggleTweakMenu,
     TogglePause,
-    PrintEphemralError {
-        error: String,
-    },
+    PrintEphemralError { error: String },
 }
 
 pub enum AppStatus {
@@ -170,12 +77,13 @@ pub(crate) struct App {
     status: AppStatus,
     // the target texture for the main context
     output_texture: wgpu::Texture,
+    // dirty textures specified by bytes of the next frame and binding location
     // We build the new ctx here before moving it into current_isf_ctx
     temp_isf_ctx: Cell<Option<Result<RenderContext, RunnerError>>>,
     // Videos that are being polled tracked by variable name
     video_streams: BTreeMap<String, VideoLoader>,
-    // Audio that is being polled tracked by variable name
-    audio_streams: BTreeMap<String, AudioLoader>,
+    // A list of in memory images to load before rendering,
+    texture_jobs: Vec<(String, Vec<u8>, u32, u32)>,
     // If true we will recompile on every file modified event that changes the md5.
     // set to true when there has been a file event, set to low when the compiled shader is
     // moved into the temp_isf_ctx
@@ -186,8 +94,6 @@ pub(crate) struct App {
     // The render targets have been reconfigured by the user
     must_update_render_targets: bool,
     // Screen output format
-    output_format: wgpu::TextureFormat,
-    // dirty textures specified by bytes of the next frame and binding location
     shader_path: PathBuf,
     frame_ct: u32,
     local: chrono::DateTime<Local>,
@@ -222,7 +128,12 @@ impl App {
         .unwrap();
 
         wgpu_device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let ctx = RenderContext::new(shader_source, output_format, wgpu_device, wgpu_queue);
+        let ctx = RenderContext::new(
+            shader_source,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu_device,
+            wgpu_queue,
+        );
         let err_fut = wgpu_device.pop_error_scope();
         let err = pollster::block_on(err_fut);
 
@@ -239,7 +150,7 @@ impl App {
                     old_shader: Some(RenderContext::error_state(
                         wgpu_device,
                         wgpu_queue,
-                        output_format,
+                        wgpu::TextureFormat::Rgba8Unorm,
                     )),
                     err_string: out,
                 }
@@ -248,37 +159,11 @@ impl App {
                 old_shader: Some(RenderContext::error_state(
                     wgpu_device,
                     wgpu_queue,
-                    output_format,
+                    wgpu::TextureFormat::Rgba8Unorm,
                 )),
                 err_string: format!("{e}"),
             },
         };
-
-        if let AppStatus::Ok { ref runner } = status {
-            for job in runner.list_set_up_jobs() {
-                match job {
-                    tweak_shader::UserJobs::LoadImageFile { location, var_name } => {
-                        let _ = message_sender.send(RunnerMessage::LoadImage {
-                            var: var_name.clone(),
-                            path: shader_path.parent().unwrap().join(location),
-                        });
-                    }
-                    tweak_shader::UserJobs::LoadAudioFile {
-                        location,
-                        var_name,
-                        fft,
-                        max_samples,
-                    } => {
-                        let _ = message_sender.send(RunnerMessage::LoadAudio {
-                            var: var_name.clone(),
-                            path: shader_path.parent().unwrap().join(location),
-                            fft: *fft,
-                            max_samples: *max_samples,
-                        });
-                    }
-                }
-            }
-        }
 
         let ui_state = UiState::new();
 
@@ -294,9 +179,10 @@ impl App {
             mip_level_count: 1,
             sample_count: 1, // crunch crunch
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
@@ -308,12 +194,12 @@ impl App {
         let start_time = std::time::Instant::now();
         let last_frame = std::time::Instant::now();
         Ok(Self {
+            texture_jobs: vec![],
             must_update_render_targets: false,
             output_texture,
             letter_box,
             messages,
             video_streams: BTreeMap::new(),
-            audio_streams: BTreeMap::new(),
             message_sender,
             _watcher: watcher,
             temp_isf_ctx: Cell::new(None),
@@ -325,20 +211,12 @@ impl App {
             start_time,
             last_frame,
             shader_path: shader_path.to_owned(),
-            output_format,
             gui_context,
             ui_state,
         })
     }
 
-    fn update_stream_textures(&mut self) {
-        if self.ui_state.options.paused {
-            self.audio_streams.values_mut().for_each(|f| f.pause());
-            return;
-        } else {
-            self.audio_streams.values_mut().for_each(|f| f.play());
-        }
-
+    fn update_stream_textures(&mut self, wgpu_device: &wgpu::Device, wgpu_queue: &wgpu::Queue) {
         let video_job_vec: Vec<_> = self
             .video_streams
             .iter_mut()
@@ -350,34 +228,15 @@ impl App {
 
         for (buf, name, width, height) in video_job_vec {
             if let Some(buf) = buf {
-                if let Some(video_buffer) = self
-                    .current_shader_mut()
-                    .load_video_stream_raw(name, height, width)
-                {
-                    video_buffer.copy_from_slice(buf.lock().unwrap().as_ref());
-                }
-            }
-        }
-
-        let audio_job_vec: Vec<_> = self
-            .audio_streams
-            .iter_mut()
-            .map(|(name, loader)| {
-                (
-                    loader.present(),
-                    name.clone(),
-                    loader.channels(),
-                    loader.samples(),
-                )
-            })
-            .collect();
-
-        for (buf, name, channels, samples) in audio_job_vec {
-            if let Some(video_buffer) = self
-                .current_shader_mut()
-                .load_audio_stream_raw(name, channels, samples)
-            {
-                video_buffer.copy_from_slice(buf.lock().unwrap().as_ref());
+                let desc = tweak_shader::TextureDesc {
+                    width,
+                    height,
+                    stride: None,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    data: &buf.lock().unwrap(),
+                };
+                self.current_shader_mut()
+                    .load_texture(name, desc, wgpu_device, wgpu_queue);
             }
         }
     }
@@ -411,7 +270,7 @@ impl App {
         &mut self,
         wgpu_device: &wgpu::Device,
         wgpu_queue: &wgpu::Queue,
-        wgpu_view: &wgpu::TextureView,
+        screen_tex: &wgpu::Texture,
         window: &egui_winit::winit::window::Window,
     ) {
         let mut wgpu_encoder =
@@ -424,104 +283,77 @@ impl App {
 
         let size = window.inner_size();
 
+        while let Some((name, rgba_8_data, width, height)) = self.texture_jobs.pop() {
+            let desc = tweak_shader::TextureDesc {
+                data: &rgba_8_data,
+                width,
+                height,
+                stride: None,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            };
+
+            self.current_shader_mut()
+                .load_texture(name, desc, wgpu_device, wgpu_queue)
+        }
+
         if self.must_update_render_targets {
             self.update_render_targets(wgpu_device, size.width, size.height);
             self.must_update_render_targets = false;
         }
 
         if !self.pipeline_invalid {
-            self.update_stream_textures();
+            self.update_stream_textures(wgpu_device, wgpu_queue);
 
-            if let Some([_, _]) = self.ui_state.options.lock_aspect_ratio {
-                let h = self.output_texture.height();
-                let w = self.output_texture.width();
-                //TODO: cache view
-                let out_tex = self.output_texture.create_view(&Default::default());
+            let h = self.output_texture.height();
+            let w = self.output_texture.width();
 
-                self.update_letterbox(w, h, size.width, size.height)
-                    .unwrap();
+            self.update_letterbox(w, h, size.width, size.height)
+                .unwrap();
 
-                self.current_shader_mut()
-                    .update_resolution([w as f32, h as f32]);
+            self.current_shader_mut()
+                .update_resolution([w as f32, h as f32]);
 
-                self.current_shader_mut().encode_render(
-                    wgpu_queue,
-                    wgpu_device,
-                    &mut wgpu_encoder,
-                    // this texture was shared with `letter_box`  in init
-                    &out_tex,
-                    w,
-                    h,
-                );
+            let view = self.output_texture.create_view(&Default::default());
+            self.current_shader_mut().render(
+                wgpu_queue,
+                wgpu_device,
+                &mut wgpu_encoder,
+                // this texture was shared with `letter_box`  in init
+                view,
+                w,
+                h,
+            );
 
-                self.letter_box.encode_render(
-                    wgpu_queue,
-                    wgpu_device,
-                    &mut wgpu_encoder,
-                    wgpu_view,
-                    size.width,
-                    size.height,
-                );
+            self.letter_box.render(
+                wgpu_queue,
+                wgpu_device,
+                &mut wgpu_encoder,
+                screen_tex.create_view(&Default::default()),
+                size.width,
+                size.height,
+            );
 
-                if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
-                    let (mut vec, w, h) = if self.ui_state.options.use_screen_size_for_screenshots {
-                        let vec = self.letter_box.render_to_vec(
-                            wgpu_queue,
-                            wgpu_device,
-                            size.width,
-                            size.height,
-                        );
-                        (vec, size.width, size.height)
-                    } else {
-                        let vec =
-                            self.current_shader_mut()
-                                .render_to_vec(wgpu_queue, wgpu_device, w, h);
-                        (vec, w, h)
-                    };
-
-                    for chunk in vec.chunks_exact_mut(4) {
-                        // Swap the red and blue channels
-                        chunk.swap(0, 2);
-                    }
-
-                    let dynamic_image = image::DynamicImage::ImageRgba8(
-                        image::RgbaImage::from_raw(w, h, vec).unwrap(),
-                    );
-
-                    dynamic_image.save(path).unwrap();
-                    self.ui_state.screen_shot_scheduled = None;
-                }
-            } else {
-                // Render the actual toy
-                self.current_shader_mut().encode_render(
-                    wgpu_queue,
-                    wgpu_device,
-                    &mut wgpu_encoder,
-                    wgpu_view,
-                    size.width,
-                    size.height,
-                );
-
-                if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
-                    let mut vec = self.current_shader_mut().render_to_vec(
+            if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
+                let (vec, w, h) = if self.ui_state.options.use_screen_size_for_screenshots {
+                    let vec = self.letter_box.render_to_vec(
                         wgpu_queue,
                         wgpu_device,
                         size.width,
                         size.height,
                     );
+                    (vec, size.width, size.height)
+                } else {
+                    let vec =
+                        self.current_shader_mut()
+                            .render_to_vec(wgpu_queue, wgpu_device, w, h);
+                    (vec, w, h)
+                };
 
-                    for chunk in vec.chunks_exact_mut(4) {
-                        // Swap the red and blue channels
-                        chunk.swap(0, 2);
-                    }
+                let dynamic_image =
+                    image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w, h, vec).unwrap());
 
-                    let dynamic_image = image::DynamicImage::ImageRgba8(
-                        image::RgbaImage::from_raw(size.width, size.height, vec).unwrap(),
-                    );
-
-                    dynamic_image.save(path).unwrap();
-                    self.ui_state.screen_shot_scheduled = None;
-                }
+                dynamic_image.save(path).unwrap();
+                self.ui_state.screen_shot_scheduled = None;
             }
         }
 
@@ -574,10 +406,11 @@ impl App {
         );
 
         {
+            let view = &screen_tex.create_view(&wgpu::TextureViewDescriptor::default());
             let mut render_pass = wgpu_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Gui"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: wgpu_view,
+                    view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -605,12 +438,16 @@ impl App {
         out_width: u32,
         out_height: u32,
     ) {
-        if self.ui_state.options.lock_aspect_ratio.is_none() {
-            self.current_shader_mut()
-                .update_resolution([out_width as f32, out_height as f32]);
-        } else {
-            let [width, height] = self.ui_state.options.lock_aspect_ratio.unwrap();
+        self.current_shader_mut()
+            .update_resolution([out_width as f32, out_height as f32]);
 
+        let [width, height] = self
+            .ui_state
+            .options
+            .lock_aspect_ratio
+            .unwrap_or([out_width, out_height]);
+
+        if self.output_texture.width() != width || self.output_texture.height() != height {
             let output_texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -621,8 +458,9 @@ impl App {
                 mip_level_count: 1,
                 sample_count: 1, // crunch crunch
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::STORAGE_BINDING
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -654,12 +492,12 @@ impl App {
         self.frame_ct += 1;
         let frame_ct = self.frame_ct;
         let time = self.start_time.elapsed().as_secs_f32();
-        let isf_ctx = self.current_shader_mut();
+        let ctx = self.current_shader_mut();
 
-        isf_ctx.update_datetime([year, month, day, seconds_since_midnight]);
-        isf_ctx.update_frame_count(frame_ct);
-        isf_ctx.update_time(time);
-        isf_ctx.update_delta(time_delta.as_secs_f32());
+        ctx.update_datetime([year, month, day, seconds_since_midnight]);
+        ctx.update_frame_count(frame_ct);
+        ctx.update_time(time);
+        ctx.update_delta(time_delta.as_secs_f32());
     }
 
     fn current_shader_mut(&mut self) -> &mut RenderContext {
@@ -678,8 +516,9 @@ impl App {
         };
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let temp_context = RenderContext::new(source, self.output_format, device, queue)
-            .map_err(RunnerError::Shader);
+        let temp_context =
+            RenderContext::new(source, wgpu::TextureFormat::Rgba8Unorm, device, queue)
+                .map_err(RunnerError::Shader);
         let err_fut = device.pop_error_scope();
         let err = pollster::block_on(err_fut);
 
@@ -707,10 +546,6 @@ impl App {
                 );
             }
             egui_winit::winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                //self.gui_context
-                //    .egui_state
-                //    .set_pixels_per_point(*scale_factor as f32);
-
                 self.gui_context.egui_screen_desc.pixels_per_point = *scale_factor as f32;
             }
             _ => {}
@@ -740,34 +575,12 @@ impl App {
             }
             RunnerMessage::Resized { width, height } => {
                 self.current_shader_mut().update_resolution([width, height]);
+                if self.ui_state.options.lock_aspect_ratio.is_none() {
+                    self.must_update_render_targets = true;
+                }
             }
             RunnerMessage::UnloadImage { var } => {
                 self.video_streams.remove(&var);
-                self.current_shader_mut().remove_texture(&var);
-            }
-            RunnerMessage::LoadAudio {
-                var,
-                path,
-                fft,
-                max_samples,
-            } => match AudioLoader::new(&path, fft, max_samples) {
-                Ok(loader) => {
-                    self.audio_streams.insert(var.clone(), loader);
-
-                    if let Some(file) = path.file_name() {
-                        self.ui_state
-                            .current_loaded_files
-                            .insert(var, file.to_string_lossy().to_string());
-                    }
-                }
-                Err(e) => {
-                    self.queue_message(RunnerMessage::PrintEphemralError {
-                        error: e.to_string(),
-                    });
-                }
-            },
-            RunnerMessage::UnloadAudio { var } => {
-                self.audio_streams.remove(&var);
                 self.current_shader_mut().remove_texture(&var);
             }
             RunnerMessage::LoadImage { var, path } => {
@@ -777,12 +590,8 @@ impl App {
                         height,
                         width,
                     }) => {
-                        self.current_shader_mut().load_texture(
-                            rgba8_data,
-                            var.clone(),
-                            width,
-                            height,
-                        );
+                        self.texture_jobs
+                            .push((var.clone(), rgba8_data, width, height));
 
                         if let Some(file) = path.file_name() {
                             self.ui_state
@@ -910,7 +719,7 @@ impl App {
                                 Some(RenderContext::error_state(
                                     wgpu_device,
                                     wgpu_queue,
-                                    self.output_format,
+                                    wgpu::TextureFormat::Rgba8Unorm,
                                 ))
                             }),
                             err_string: new_err_string,

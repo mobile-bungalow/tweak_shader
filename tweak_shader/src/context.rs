@@ -1,17 +1,11 @@
 use crate::input_type::*;
 use crate::uniforms;
-use crate::VarName;
 use naga::front::glsl;
 use wgpu::naga;
 
-use naga::{
-    front::glsl::{Frontend, Options},
-    ShaderStage,
-};
+use naga::{front::glsl::Options, ShaderStage};
 
-use std::collections::BTreeMap;
-
-use crate::{Error, UserJobs};
+use crate::Error;
 
 use wgpu::TextureFormat;
 
@@ -20,12 +14,29 @@ use wgpu::TextureFormat;
 pub struct RenderContext {
     uniforms: uniforms::Uniforms,
     passes: Vec<RenderPass>,
-    pipeline: wgpu::RenderPipeline,
-    float_pipeline: wgpu::RenderPipeline,
-    streams: BTreeMap<VarName, StreamInfo>,
-    texture_job_queue: BTreeMap<VarName, TextureJob>,
-    user_set_up_jobs: Vec<crate::UserJobs>,
-    cpu_view_cache: BufferCache,
+    pipeline: Pipeline,
+    screen_buffer_cache: BufferCache,
+    stage: wgpu::naga::ShaderStage,
+}
+
+#[derive(Debug)]
+enum Pipeline {
+    Compute {
+        compute_pipeline: wgpu::ComputePipeline,
+        workgroups: [u32; 3],
+    },
+    Pixel {
+        pipeline: wgpu::RenderPipeline,
+        float_pipeline: wgpu::RenderPipeline,
+    },
+}
+
+pub struct TextureDesc<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub stride: Option<u32>,
+    pub data: &'a [u8],
+    pub format: wgpu::TextureFormat,
 }
 
 impl RenderContext {
@@ -44,36 +55,7 @@ impl RenderContext {
     ) -> Result<Self, Error> {
         let source = source.as_ref();
 
-        let document =
-            crate::parsing::parse_document(source).map_err(Error::DocumentParsingFailed)?;
-
-        let user_set_up_jobs = document
-            .preloads
-            .iter()
-            .filter_map(
-                |(var_name, location)| match document.inputs.get(var_name.as_str()) {
-                    Some(InputType::Audio(_, max_samples)) => Some(UserJobs::LoadAudioFile {
-                        location: std::path::PathBuf::from(location),
-                        var_name: var_name.clone(),
-                        fft: false,
-                        max_samples: *max_samples,
-                    }),
-
-                    Some(InputType::AudioFft(_, max_samples)) => Some(UserJobs::LoadAudioFile {
-                        location: std::path::PathBuf::from(location),
-                        var_name: var_name.clone(),
-                        fft: true,
-                        max_samples: *max_samples,
-                    }),
-
-                    Some(InputType::Image(_)) => Some(UserJobs::LoadImageFile {
-                        location: std::path::PathBuf::from(location),
-                        var_name: var_name.clone(),
-                    }),
-                    _ => None,
-                },
-            )
-            .collect();
+        let document = crate::parsing::parse_document(source)?;
 
         let stripped_src: String = source
             .lines()
@@ -81,50 +63,41 @@ impl RenderContext {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut options = Options::from(ShaderStage::Fragment);
+        let options = Options {
+            stage: document.stage,
+            defines: [("TWEAK_SHADER".to_owned(), "1".to_owned())]
+                .into_iter()
+                .collect(),
+        };
 
-        options
-            .defines
-            .insert("TWEAK_SHADER".to_owned(), "1".to_owned());
+        let naga_mod = glsl::Frontend::default()
+            .parse(&options, &stripped_src)
+            .map_err(|e| {
+                Error::ShaderCompilationFailed(display_errors(&e.errors, &stripped_src))
+            })?;
 
-        let mut frontend = Frontend::default();
-
-        let naga_mod = frontend.parse(&options, &stripped_src).map_err(|e| {
-            Error::ShaderCompilationFailed(display_errors(&e.errors, &stripped_src))
-        })?;
-
-        let mut pass_structure = vec![];
-
+        // internal passes should be HDR, they are often used
+        // pass data around.
         let pass_texture = if is_floating_point_in_shader(&format) {
             TextureFormat::Rgba16Float
         } else {
             TextureFormat::Rgba16Uint
         };
 
-        pass_structure.extend(
-            document
-                .passes
-                .iter()
-                .map(|pass| RenderPass::new(pass, pass_texture)),
-        );
+        let pass_structure = document
+            .passes
+            .iter()
+            .map(|pass| RenderPass::new(pass, pass_texture))
+            .chain(std::iter::once(RenderPass::new(
+                &Default::default(),
+                format,
+            )))
+            .collect::<Vec<_>>();
 
-        pass_structure.push(RenderPass::new(&Default::default(), format));
+        let sets = uniforms::sets(&naga_mod, &document, device, queue, &format)?;
 
-        // collect all set indices, find the max then create bind sets contiguous up to max.
-        // some might be empty.
-        let sets = uniforms::sets(&naga_mod);
-        let sets = sets.iter().map(|s| *s as i32).next_back().unwrap_or(-1);
-        let sets = (0..(sets + 1))
-            .map(|s| {
-                uniforms::TweakBindGroup::new_from_naga(
-                    s as u32, &naga_mod, &document, device, queue, &format,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(crate::Error::UniformError)?;
-
-        let push_const =
-            uniforms::push_constant(&naga_mod, &document).map_err(Error::UniformError)?;
+        // theres is only every 1 or 0 push constant blocks
+        let push_const = uniforms::push_constant(&naga_mod, &document)?;
 
         let uniforms = uniforms::Uniforms::new(
             &document,
@@ -134,25 +107,13 @@ impl RenderContext {
             sets,
             push_const,
             pass_structure.len(),
-        )
-        .map_err(Error::UniformError)?;
-
-        let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
-        });
-
-        let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "../resources/stub.wgsl"
-            ))),
-        });
+        )?;
 
         let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
+        let is_compute = document.stage == ShaderStage::Compute;
 
         let push_constant_ranges = uniforms
-            .push_constant_ranges()
+            .push_constant_ranges(is_compute)
             .map(|e| vec![e])
             .unwrap_or(vec![]);
 
@@ -162,100 +123,235 @@ impl RenderContext {
             push_constant_ranges: &push_constant_ranges,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: Some(&pipeline_layout),
-            fragment: Some(wgpu::FragmentState {
-                compilation_options: Default::default(),
-                module: &fs_shader_module,
-                entry_point: "main",
-                targets: &[Some(format.into())],
-            }),
-            vertex: wgpu::VertexState {
-                compilation_options: Default::default(),
-                module: &vs_shader_module,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview: None,
-            label: None,
-        });
+        let pipeline = if is_compute {
+            let compute_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+            });
 
-        let float_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: Some(&pipeline_layout),
-            fragment: Some(wgpu::FragmentState {
-                module: &fs_shader_module,
-                compilation_options: Default::default(),
-                entry_point: "main",
-                targets: &[Some(pass_texture.into())],
-            }),
-            vertex: wgpu::VertexState {
-                compilation_options: Default::default(),
-                module: &vs_shader_module,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview: None,
-            label: None,
-        });
+            let compute_pipeline =
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: None,
+                    layout: Some(&pipeline_layout),
+                    module: &compute_mod,
+                    entry_point: "main",
+                    compilation_options: Default::default(),
+                });
+
+            Pipeline::Compute {
+                compute_pipeline,
+                workgroups: uniforms::work_groups_from_naga(&naga_mod),
+            }
+        } else {
+            let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+            });
+
+            let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+                    "../resources/stub.wgsl"
+                ))),
+            });
+
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                layout: Some(&pipeline_layout),
+                fragment: Some(wgpu::FragmentState {
+                    compilation_options: Default::default(),
+                    module: &fs_shader_module,
+                    entry_point: "main",
+                    targets: &[Some(format.into())],
+                }),
+                vertex: wgpu::VertexState {
+                    compilation_options: Default::default(),
+                    module: &vs_shader_module,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                label: None,
+            });
+
+            // HDR pipeline for internal render passes
+            let float_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                layout: Some(&pipeline_layout),
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs_shader_module,
+                    compilation_options: Default::default(),
+                    entry_point: "main",
+                    targets: &[Some(pass_texture.into())],
+                }),
+                vertex: wgpu::VertexState {
+                    compilation_options: Default::default(),
+                    module: &vs_shader_module,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                label: None,
+            });
+
+            Pipeline::Pixel {
+                pipeline,
+                float_pipeline,
+            }
+        };
 
         Ok(RenderContext {
             uniforms,
-            user_set_up_jobs,
             pipeline,
-            float_pipeline,
             passes: pass_structure,
-            cpu_view_cache: BufferCache::new(&format, 1, 1, None, device),
-            texture_job_queue: BTreeMap::new(),
-            streams: BTreeMap::new(),
+            screen_buffer_cache: BufferCache::new(
+                &format,
+                1,
+                1,
+                None,
+                device,
+                document.stage == wgpu::naga::ShaderStage::Compute,
+            ),
+            stage: document.stage,
         })
     }
 
-    /// Returns a slice of jobs the user should complete.
-    /// see [UserJobs] for more information. handling these jobs is totally
-    /// optional.
-    pub fn list_set_up_jobs(&self) -> &[UserJobs] {
-        &self.user_set_up_jobs
+    /// Returns true if the loaded shader is a compute shader.
+    pub fn is_compute(&self) -> bool {
+        self.stage == ShaderStage::Compute
     }
 
-    /// Renders the shader maintained by this context to the provided texture view.
-    /// this will produce validation errors if the view format does not match the
-    /// format the context was configured with in [RenderContext::new].
-    pub fn render(
-        &mut self,
-        queue: &wgpu::Queue,
-        device: &wgpu::Device,
-        view: &wgpu::TextureView,
-        width: u32,
-        height: u32,
-    ) {
-        let mut command_encoder = device.create_command_encoder(&Default::default());
-        self.encode_render(queue, device, &mut command_encoder, view, width, height);
-        queue.submit(Some(command_encoder.finish()));
+    /// If the shader is a compute shader, then subsequent calls to
+    /// `render_to_vec` and `render_to_slice`. will yield data from those
+    /// storage textures.
+    pub fn set_compute_target(&mut self, uniform_name: &str) -> Result<(), uniforms::Error> {
+        self.uniforms.set_compute_target(uniform_name)?;
+        Ok(())
     }
 
     /// Encodes the renderpasses and buffer copies in the correct order into
     /// `command` encoder targeting `view`.
-    pub fn encode_render(
+    pub fn render<T: Into<Option<wgpu::TextureView>>>(
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        target: T,
         width: u32,
         height: u32,
     ) {
-        // resize render targets and copy over texture contents for consistency
-        self.update_pass_textures(command_encoder, device, width, height);
-        // updates video, audio, streams, shows new images.
-        self.update_display_textures(device, queue);
+        let target = target.into();
+
+        match &self.pipeline {
+            Pipeline::Compute { .. } => {
+                self.encode_compute_render(command_encoder, target, device, queue, width, height);
+            }
+            Pipeline::Pixel { .. } => {
+                // resize render targets and copy over texture contents for consistency
+                self.update_pass_textures(command_encoder, device, width, height);
+
+                // write changes to uniforms to gpu mapped buffers
+                self.uniforms.update_uniform_buffers(device, queue);
+
+                let target = target.unwrap_or_else(|| {
+                    let fmt = self.uniforms.format();
+
+                    if !self
+                        .screen_buffer_cache
+                        .supports_render(&fmt, width, height, None)
+                    {
+                        self.screen_buffer_cache =
+                            BufferCache::new(&fmt, width, height, None, device, self.is_compute());
+                    };
+
+                    self.screen_buffer_cache
+                        .tex()
+                        .create_view(&Default::default())
+                });
+
+                self.encode_pixel_render(device, command_encoder, target);
+            }
+        }
+    }
+
+    fn encode_compute_render(
+        &mut self,
+        command_encoder: &mut wgpu::CommandEncoder,
+        target: Option<wgpu::TextureView>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+    ) {
+        if let Some(view) = target {
+            self.uniforms.map_target_view(view);
+        }
+
+        self.uniforms
+            .adjust_storage_texture_sizes(device, queue, width, height);
+
+        self.uniforms
+            .clear_ephemeral_targets_and_buffers(command_encoder);
+
         // write changes to uniforms to gpu mapped buffers
         self.uniforms.update_uniform_buffers(device, queue);
+
+        for (idx, _) in self.passes.iter().enumerate() {
+            self.uniforms.set_pass_index(idx, command_encoder);
+
+            let Pipeline::Compute {
+                ref compute_pipeline,
+                workgroups: [x, y, z],
+            } = self.pipeline
+            else {
+                return;
+            };
+
+            let mut rpass = command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+
+            rpass.set_pipeline(compute_pipeline);
+
+            for (set, bind_group) in self.uniforms.iter_sets() {
+                rpass.set_bind_group(set, bind_group, &[]);
+            }
+
+            if let Some(bytes) = self.uniforms.push_constant_bytes() {
+                rpass.set_push_constants(0, bytes);
+            }
+
+            let dispatch_x = (width + x) / x;
+            let dispatch_y = (height + y) / y;
+
+            rpass.dispatch_workgroups(dispatch_x, dispatch_y, z);
+            std::mem::drop(rpass);
+
+            self.uniforms.forward_relays(command_encoder);
+        }
+
+        self.uniforms.reset_targets_to_context_managed();
+        self.post_render();
+    }
+
+    fn encode_pixel_render(
+        &mut self,
+        device: &wgpu::Device,
+        command_encoder: &mut wgpu::CommandEncoder,
+        view: wgpu::TextureView,
+    ) {
+        let Pipeline::Pixel {
+            ref pipeline,
+            ref float_pipeline,
+        } = self.pipeline
+        else {
+            return;
+        };
 
         for (idx, pass) in self.passes.iter().enumerate() {
             self.uniforms.set_pass_index(idx, command_encoder);
@@ -278,19 +374,22 @@ impl RenderContext {
                     depth_stencil_attachment: None,
                 });
 
-                rpass.set_pipeline(&self.float_pipeline);
+                rpass.set_pipeline(float_pipeline);
+
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }
+
                 if let Some(bytes) = self.uniforms.push_constant_bytes() {
                     rpass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytes);
                 }
+
                 rpass.draw(0..3, 0..1);
             } else {
                 let mut rpass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
+                        view: &view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
@@ -302,8 +401,8 @@ impl RenderContext {
                     depth_stencil_attachment: None,
                 });
 
-                rpass.set_pipeline(&self.pipeline);
-                rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+                rpass.set_pipeline(pipeline);
+
                 for (set, bind_group) in self.uniforms.iter_sets() {
                     rpass.set_bind_group(set, bind_group, &[]);
                 }
@@ -312,6 +411,8 @@ impl RenderContext {
                 }
                 rpass.draw(0..3, 0..1);
             }
+
+            self.uniforms.forward_relays(command_encoder);
 
             // copy the render pass target over to the
             // texture that is used in the pipeline
@@ -348,24 +449,46 @@ impl RenderContext {
                         set.insert(tex_name.clone());
                     }
 
-                    let size = height
-                        * width
-                        * pass
-                            .target_format
-                            .block_copy_size(Some(wgpu::TextureAspect::All))
-                            .unwrap_or(4);
+                    if device.features().contains(wgpu::Features::CLEAR_TEXTURE) {
+                        if let Some(tex) = self.uniforms.get_texture(tex_name) {
+                            command_encoder.clear_texture(
+                                tex,
+                                &wgpu::ImageSubresourceRange {
+                                    aspect: wgpu::TextureAspect::All,
+                                    base_mip_level: 0,
+                                    mip_level_count: None,
+                                    base_array_layer: 0,
+                                    array_layer_count: None,
+                                },
+                            );
+                        }
+                    } else {
+                        let Some(tex) = self.uniforms.get_texture(tex_name) else {
+                            continue;
+                        };
 
-                    let slice = &vec![0; size as usize];
-                    self.uniforms.load_texture(
-                        tex_name,
-                        slice,
-                        height,
-                        width,
-                        None,
-                        &pass.target_format,
-                        device,
-                        queue,
-                    );
+                        let view = tex.create_view(&Default::default());
+
+                        command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("Clear Texture Pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                                        r: 0.0,
+                                        g: 0.0,
+                                        b: 0.0,
+                                        a: 0.0,
+                                    }),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            occlusion_query_set: None,
+                            timestamp_writes: None,
+                        });
+                    }
                 }
             }
         }
@@ -377,7 +500,7 @@ impl RenderContext {
     /// the inputs provided by the user, as well as
     /// the raw bytes of all the uniforms maintained by the [RenderContext]
     /// that do not have input pragmas.
-    pub fn iter_inputs_mut(&mut self) -> impl Iterator<Item = (&str, MutInput)> {
+    pub fn iter_inputs_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
         self.uniforms.iter_custom_uniforms_mut()
     }
 
@@ -385,7 +508,7 @@ impl RenderContext {
     /// the inputs provided by the user, as well as
     /// the raw bytes of all the uniforms maintained by the [RenderContext]
     /// that do not have input pragmas.
-    pub fn iter_inputs(&self) -> impl Iterator<Item = (&str, &InputType)> {
+    pub fn iter_inputs(&self) -> impl Iterator<Item = (&String, &InputType)> {
         self.uniforms.iter_custom_uniforms()
     }
 
@@ -410,119 +533,17 @@ impl RenderContext {
         self.uniforms.get_input(name)
     }
 
-    /// Provides access to the raw float array of sample data
-    /// that will be converted into a texture
-    /// for the audio stream with the name `name`
-    /// * The data must be in a planar format.
-    /// * The data may have an FFT performed on it
-    /// returns None if the name provided does not correspond to a
-    /// valid audio input.
-    pub fn load_audio_stream_raw<S: AsRef<str>>(
-        &mut self,
-        name: S,
-        channels: u16,
-        samples: usize,
-    ) -> Option<&mut [f32]> {
-        if self.streams.get_mut(name.as_ref()).is_some() {
-            // weird borrow checker nuance
-            let stream = self.streams.get_mut(name.as_ref()).unwrap();
-            match stream {
-                StreamInfo::Audio { dirty, data, .. } => {
-                    *dirty = true;
-                    Some(data.as_mut_slice())
-                }
-                _ => None,
-            }
-        } else if self
-            .uniforms
-            .get_input_mut(name.as_ref())
-            .is_some_and(|ty| matches!(ty.variant(), InputVariant::AudioFft | InputVariant::Audio))
-        {
-            let val = StreamInfo::Audio {
-                dirty: true,
-                channels: channels as usize,
-                samples,
-                data: vec![0.0; channels as usize * samples],
-            };
-            self.streams.insert(name.as_ref().to_owned(), val);
-            if let StreamInfo::Audio { data, .. } = self.streams.get_mut(name.as_ref())? {
-                Some(data.as_mut_slice())
-            } else {
-                // unreachable
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Provides access to the raw byte array of rgba8unormsrgb
-    /// formatted pixels that will be uploaded into the texture
-    /// with name `name`. This causes the context to allocate memory
-    /// large enough to store a frame of your video until you call
-    /// [`RenderContext::remove_texture`].
-    pub fn load_video_stream_raw<S: AsRef<str>>(
-        &mut self,
-        name: S,
-        height: u32,
-        width: u32,
-    ) -> Option<&mut [u8]> {
-        if self.streams.get_mut(name.as_ref()).is_some() {
-            // weird borrow checker nuance
-            let stream = self.streams.get_mut(name.as_ref()).unwrap();
-            match stream {
-                StreamInfo::Video { dirty, data, .. } => {
-                    *dirty = true;
-                    Some(data.as_mut_slice())
-                }
-                _ => None,
-            }
-        } else if self
-            .uniforms
-            .get_input_mut(name.as_ref())
-            .is_some_and(|ty| matches!(ty.variant(), InputVariant::Image))
-        {
-            let val = StreamInfo::Video {
-                dirty: true,
-                height,
-                width,
-                data: vec![0; (height * width * 4) as usize],
-            };
-            self.streams.insert(name.as_ref().to_owned(), val);
-            if let StreamInfo::Video { data, .. } = self.streams.get_mut(name.as_ref())? {
-                Some(data.as_mut_slice())
-            } else {
-                // unreachable
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     /// Loads a texture of the specified format into the variable with name `name`
     /// immediately.
-    pub fn load_image_immediate<S: AsRef<str>>(
+    pub fn load_texture<S: AsRef<str>>(
         &mut self,
         name: S,
-        height: u32,
-        width: u32,
-        bytes_per_row: u32,
+        texture_desc: TextureDesc,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        format: &wgpu::TextureFormat,
-        data: &[u8],
     ) {
-        self.uniforms.load_texture(
-            name.as_ref(),
-            data,
-            height,
-            width,
-            Some(bytes_per_row),
-            format,
-            device,
-            queue,
-        );
+        self.uniforms
+            .load_texture(name.as_ref(), texture_desc, device, queue);
     }
 
     /// Creates a texture view and maps it to the pipeline in place of a locally
@@ -542,83 +563,11 @@ impl RenderContext {
             .override_texture_view_with_tex(variable_name, texture)
     }
 
-    /// maps a texture view to the pipeline in place of a locally
-    /// stored texture. this will fail if you try to override a render target texture.
-    pub fn load_shared_texture_view(
-        &mut self,
-        texture: wgpu::TextureView,
-        width: u32,
-        height: u32,
-        variable_name: &str,
-    ) -> bool {
-        // fizzle on attempting to write a target texture
-        if self
-            .passes
-            .iter()
-            .filter_map(|p| p.pass_target_var_name.as_ref())
-            .any(|t| t == variable_name)
-        {
-            return false;
-        }
-
-        self.uniforms
-            .override_texture_view_with_view(variable_name, width, height, texture)
-    }
-
-    /// If a texture is loaded in the pipeline under `variable_name` this will return a new view into it.
-    pub fn get_texture_view(&mut self, variable_name: &str) -> Option<wgpu::TextureView> {
+    /// If a texture is loaded in the pipeline under `variable_name` this will reference to it.
+    /// this includes storage textures
+    pub fn get_texture(&mut self, variable_name: &str) -> Option<&wgpu::Texture> {
         let tex = self.uniforms.get_texture(variable_name)?;
-        let desc = wgpu::TextureViewDescriptor {
-            label: Some(variable_name),
-            format: Some(tex.format()),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            aspect: wgpu::TextureAspect::All,
-            base_mip_level: 0,
-            mip_level_count: Some(1),
-            base_array_layer: 0,
-            array_layer_count: Some(1),
-        };
-        Some(tex.create_view(&desc))
-    }
-
-    /// Queues the texture with `variable_name`
-    /// to be written to with the data in `data`.
-    /// data is assumed to be in rgba8unormsrgb format.
-    /// data will NOT be loaded if it is the wrong size
-    /// or if you attempt to write to a
-    /// render pass target texture.
-    pub fn load_texture(
-        &mut self,
-        data: Vec<u8>,
-        variable_name: String,
-        width: u32,
-        height: u32,
-    ) -> bool {
-        // fizzle on attempting to write a target texture
-        if self
-            .passes
-            .iter()
-            .filter_map(|p| p.pass_target_var_name.as_ref())
-            .any(|t| t == &variable_name)
-        {
-            return false;
-        }
-
-        if data.len() != (width * height * 4) as usize {
-            return false;
-        }
-
-        // only keep the most recent texture update
-        self.texture_job_queue.insert(
-            variable_name.clone(),
-            TextureJob {
-                data,
-                width,
-                height,
-                variable_name,
-            },
-        );
-        true
+        Some(tex)
     }
 
     /// returns an instance of the render context in a default error state
@@ -661,22 +610,28 @@ impl RenderContext {
         let fmt = self.uniforms.format();
 
         if !self
-            .cpu_view_cache
+            .screen_buffer_cache
             .supports_render(&fmt, width, height, None)
         {
-            self.cpu_view_cache = BufferCache::new(&fmt, width, height, None, device);
+            self.screen_buffer_cache =
+                BufferCache::new(&fmt, width, height, None, device, self.is_compute());
         };
 
-        let view = self.cpu_view_cache.tex().create_view(&Default::default());
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
 
-        self.render(queue, device, &view, width, height);
+        let mut command_encoder = device.create_command_encoder(&Default::default());
+        self.render(queue, device, &mut command_encoder, view, width, height);
+        queue.submit(Some(command_encoder.finish()));
 
         let mut out = vec![0; (width * height * block_size) as usize];
 
         read_texture_contents_to_slice(
             device,
             queue,
-            &self.cpu_view_cache,
+            &self.screen_buffer_cache,
             height,
             width,
             None,
@@ -705,83 +660,31 @@ impl RenderContext {
         let fmt = self.uniforms.format();
 
         if !self
-            .cpu_view_cache
-            .supports_render(&fmt, width, height, stride.map(|s| s as usize))
+            .screen_buffer_cache
+            .supports_render(&fmt, width, height, None)
         {
-            self.cpu_view_cache =
-                BufferCache::new(&fmt, width, height, stride.map(|s| s as usize), device);
+            self.screen_buffer_cache =
+                BufferCache::new(&fmt, width, height, None, device, self.is_compute());
         };
 
-        let view = self.cpu_view_cache.tex().create_view(&Default::default());
+        let view = self
+            .screen_buffer_cache
+            .tex()
+            .create_view(&Default::default());
 
-        self.render(queue, device, &view, width, height);
+        let mut command_encoder = device.create_command_encoder(&Default::default());
+        self.render(queue, device, &mut command_encoder, view, width, height);
+        queue.submit(Some(command_encoder.finish()));
 
         read_texture_contents_to_slice(
             device,
             queue,
-            &self.cpu_view_cache,
+            &self.screen_buffer_cache,
             height,
             width,
             stride,
             slice,
         );
-    }
-
-    fn update_display_textures(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        for (name, val) in self.streams.iter_mut() {
-            match val {
-                StreamInfo::Video {
-                    dirty,
-                    height,
-                    width,
-                    ref mut data,
-                } if *dirty => {
-                    self.uniforms.load_texture(
-                        name,
-                        data.as_ref(),
-                        *height,
-                        *width,
-                        None,
-                        &wgpu::TextureFormat::Rgba8UnormSrgb,
-                        device,
-                        queue,
-                    );
-                    *dirty = false;
-                }
-                StreamInfo::Audio {
-                    dirty,
-                    samples,
-                    channels,
-                    data,
-                } if *dirty => {
-                    self.uniforms.load_texture(
-                        name,
-                        float_to_rgba8_snorm(data).as_slice(),
-                        *channels as u32,
-                        *samples as u32,
-                        None,
-                        &wgpu::TextureFormat::Rgba8UnormSrgb,
-                        device,
-                        queue,
-                    );
-                    *dirty = false;
-                }
-                _ => {}
-            }
-        }
-
-        while let Some((_, job)) = self.texture_job_queue.pop_first() {
-            self.uniforms.load_texture(
-                &job.variable_name,
-                job.data.as_ref(),
-                job.height,
-                job.width,
-                None,
-                &wgpu::TextureFormat::Rgba8UnormSrgb,
-                device,
-                queue,
-            );
-        }
     }
 
     // resizes all the render pass target textures
@@ -800,6 +703,7 @@ impl RenderContext {
         {
             return;
         }
+        let compute = self.is_compute();
 
         for pass in self.passes.iter_mut() {
             let Some(target) = pass.pass_target_var_name.clone() else {
@@ -816,8 +720,12 @@ impl RenderContext {
                     pass.target_format,
                 ));
 
-                let new_target =
-                    device.create_texture(&target_desc(new_width, new_height, pass.target_format));
+                let new_target = device.create_texture(&target_desc(
+                    new_width,
+                    new_height,
+                    pass.target_format,
+                    compute,
+                ));
 
                 if let Some((old_target, _)) = pass.render_target_texture.as_ref() {
                     let min_width = u32::min(new_width, old_target.width());
@@ -864,15 +772,20 @@ impl RenderContext {
     /// It will be replaced with a placeholder texture which is a 1x1 transparent pixel.
     /// returns true if the texture existed.
     pub fn remove_texture(&mut self, var: &str) -> bool {
-        let stat = self.uniforms.unload_texture(var);
-        let stream = self.streams.remove(var).is_some();
-        stat || stream
+        self.uniforms.unload_texture(var)
+    }
+
+    /// Iterate over the names and peristence states of the
+    /// storage texture targets in the document.
+    pub fn iter_targets(&self) -> impl Iterator<Item = uniforms::TargetDescriptor<'_>> {
+        self.uniforms.iter_targets()
     }
 
     /// Returns true if this render context builds up
     /// a state over its runtime using persistent targets
     pub fn is_stateful(&mut self) -> bool {
         self.passes.iter().any(|pass| pass.persistent)
+            || self.uniforms.iter_targets().any(|targ| targ.persistent)
     }
 
     /// copy all common textures and
@@ -962,31 +875,6 @@ impl RenderContext {
 }
 
 #[derive(Debug)]
-enum StreamInfo {
-    Video {
-        dirty: bool,
-        height: u32,
-        width: u32,
-        data: Vec<u8>,
-    },
-    Audio {
-        dirty: bool,
-        samples: usize,
-        channels: usize,
-        data: Vec<f32>,
-    },
-}
-
-#[derive(Debug)]
-// a queued rgba8unormsrgb texture job
-struct TextureJob {
-    data: Vec<u8>,
-    variable_name: String,
-    height: u32,
-    width: u32,
-}
-
-#[derive(Debug)]
 struct RenderPass {
     target_format: wgpu::TextureFormat,
     // whether or not the buffer is cleared every render
@@ -1043,7 +931,7 @@ impl RenderPass {
 }
 
 #[derive(Debug)]
-struct BufferCache {
+pub struct BufferCache {
     tex: wgpu::Texture,
     /// 256 byte aligned buffer
     buf: wgpu::Buffer,
@@ -1057,6 +945,7 @@ impl BufferCache {
         height: u32,
         stride: Option<usize>,
         device: &wgpu::Device,
+        compute: bool,
     ) -> Self {
         let block_size = format
             .block_copy_size(Some(wgpu::TextureAspect::All))
@@ -1072,7 +961,7 @@ impl BufferCache {
             mapped_at_creation: false,
         });
 
-        let tex = device.create_texture(&target_desc(width, height, *format));
+        let tex = device.create_texture(&target_desc(width, height, *format, compute));
 
         Self { buf, tex, stride }
     }
@@ -1109,27 +998,27 @@ impl BufferCache {
 // if a texture format is used as a shader color target,
 // this returns true if it requires a vec4 color output.
 fn is_floating_point_in_shader(format: &wgpu::TextureFormat) -> bool {
-    match format {
+    !matches!(
+        format,
         TextureFormat::R8Uint
-        | TextureFormat::R8Sint
-        | TextureFormat::R16Uint
-        | TextureFormat::R16Sint
-        | TextureFormat::Rg8Uint
-        | TextureFormat::Rg8Sint
-        | TextureFormat::Rg16Uint
-        | TextureFormat::Rg16Sint
-        | TextureFormat::Rgba8Uint
-        | TextureFormat::Rgba8Sint
-        | TextureFormat::Rgba16Uint
-        | TextureFormat::Rgba16Sint
-        | TextureFormat::R32Uint
-        | TextureFormat::R32Sint
-        | TextureFormat::Rg32Uint
-        | TextureFormat::Rg32Sint
-        | TextureFormat::Rgba32Uint
-        | TextureFormat::Rgba32Sint => false,
-        _ => true,
-    }
+            | TextureFormat::R8Sint
+            | TextureFormat::R16Uint
+            | TextureFormat::R16Sint
+            | TextureFormat::Rg8Uint
+            | TextureFormat::Rg8Sint
+            | TextureFormat::Rg16Uint
+            | TextureFormat::Rg16Sint
+            | TextureFormat::Rgba8Uint
+            | TextureFormat::Rgba8Sint
+            | TextureFormat::Rgba16Uint
+            | TextureFormat::Rgba16Sint
+            | TextureFormat::R32Uint
+            | TextureFormat::R32Sint
+            | TextureFormat::Rg32Uint
+            | TextureFormat::Rg32Sint
+            | TextureFormat::Rgba32Uint
+            | TextureFormat::Rgba32Sint
+    )
 }
 
 // template for input textures, copied to from the gpu render target
@@ -1157,8 +1046,22 @@ fn render_pass_result_desc(
 }
 
 // template for targets written to by the gpu
-fn target_desc(width: u32, height: u32, format: TextureFormat) -> wgpu::TextureDescriptor<'static> {
+fn target_desc(
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    compute: bool,
+) -> wgpu::TextureDescriptor<'static> {
+    let mut usage = wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::COPY_SRC;
+
+    if compute {
+        usage |= wgpu::TextureUsages::STORAGE_BINDING;
+    }
+
     wgpu::TextureDescriptor {
+        usage,
         label: None,
         size: wgpu::Extent3d {
             width,
@@ -1169,31 +1072,8 @@ fn target_desc(width: u32, height: u32, format: TextureFormat) -> wgpu::TextureD
         sample_count: 1, // crunch crunch
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::COPY_DST
-            | wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     }
-}
-
-fn float_to_rgba8_snorm(input: &[f32]) -> Vec<u8> {
-    let mut output = vec![0; input.len() * 4];
-
-    let sum: f32 = input.iter().sum();
-    let avg = sum / input.len() as f32;
-
-    for (i, &value) in input.iter().enumerate() {
-        let normalized_value = 0.75 + (value - avg);
-
-        let color = (normalized_value * 255.0).round().clamp(0.0, 255.0) as u8;
-
-        output[i * 4] = color;
-        output[i * 4 + 1] = color;
-        output[i * 4 + 2] = color;
-        output[i * 4 + 3] = 255;
-    }
-
-    output
 }
 
 fn display_errors(errors: &[glsl::Error], source: &str) -> String {
@@ -1245,7 +1125,7 @@ fn read_texture_contents_to_slice(
     encoder.copy_texture_to_buffer(
         cpu_buffer_cache.tex().as_image_copy(),
         wgpu::ImageCopyBuffer {
-            buffer: &cpu_buffer_cache.buf(),
+            buffer: cpu_buffer_cache.buf(),
             layout: wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(cpu_buffer_cache.stride as u32),

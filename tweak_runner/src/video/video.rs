@@ -9,6 +9,24 @@ use std::sync::{Arc, Condvar, Mutex};
 
 type TextureBuffer = Arc<Mutex<Vec<u8>>>;
 
+impl super::VideoLoaderTrait for VideoLoader {
+    fn init<P: AsRef<std::path::Path>>(path: P) -> Result<Self, &'static str> {
+        VideoLoader::init(path).map_err(|e| format!("{e}"))
+    }
+
+    fn present(&self) -> Option<Arc<Mutex<Vec<u8>>>> {
+        self.present()
+    }
+
+    fn width(&self) -> u32 {
+        self.width()
+    }
+
+    fn height(&self) -> u32 {
+        self.height()
+    }
+}
+
 #[derive(Debug)]
 pub struct VideoLoaderErr(pub String);
 

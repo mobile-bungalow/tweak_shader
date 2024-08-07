@@ -1,5 +1,4 @@
 use app::{App, RunnerMessage};
-use egui_wgpu::wgpu;
 use egui_winit::winit::event::{ElementState, KeyEvent, MouseButton};
 use egui_winit::winit::keyboard::{Key, NamedKey};
 use egui_winit::winit::{
@@ -14,6 +13,7 @@ use std::process::exit;
 mod app;
 mod initialization;
 mod ui;
+mod video;
 
 fn main() {
     let (path, shader_source) = parse_commands();
@@ -136,11 +136,7 @@ fn main() {
                                 .get_current_texture()
                                 .expect("Failed to acquire next swap chain texture");
 
-                            let view = frame
-                                .texture
-                                .create_view(&wgpu::TextureViewDescriptor::default());
-
-                            app.render(&wgpu_device, &wgpu_queue, &view, &window);
+                            app.render(&wgpu_device, &wgpu_queue, &frame.texture, &window);
                             app.queue_message(RunnerMessage::RenderFinished);
 
                             frame.present();
@@ -209,6 +205,11 @@ fn parse_commands() -> (PathBuf, String) {
         eprintln!("Error: Please specify a file with --file <path_to_shader>");
         process::exit(1);
     };
+
+    if !std::path::PathBuf::from(&path).exists() {
+        eprintln!("{path} does not exist!");
+        process::exit(1);
+    }
 
     // ifn't ain't no fork.
     // fork it with no fork.

@@ -47,6 +47,7 @@ pub struct UiState {
     pub current_loaded_files: BTreeMap<String, String>,
     pub notifications: Vec<String>,
     pub toasts: Toasts,
+    pub compute_target: usize,
 }
 
 impl UiState {
@@ -56,7 +57,7 @@ impl UiState {
 }
 
 pub fn side_panel(
-    isf_ctx: &mut tweak_shader::RenderContext,
+    render_ctx: &mut tweak_shader::RenderContext,
     message_sender: &mpsc::Sender<RunnerMessage>,
     ui_state: &mut UiState,
     ctx: &egui_winit::egui::Context,
@@ -82,14 +83,43 @@ pub fn side_panel(
                     }
                 });
 
-                let mut inputs = isf_ctx.iter_inputs_mut().collect::<Vec<_>>();
+                if render_ctx.is_compute() {
+                    let name = render_ctx
+                        .iter_targets()
+                        .nth(ui_state.compute_target)
+                        .unwrap()
+                        .name;
+
+                    let names = render_ctx.iter_targets().enumerate();
+
+                    let before = ui_state.compute_target;
+                    egui_winit::egui::ComboBox::from_label("Current Target")
+                        .selected_text(name)
+                        .show_ui(ui, |ui| {
+                            for (idx, targ) in names {
+                                ui.selectable_value(&mut ui_state.compute_target, idx, targ.name);
+                            }
+                        });
+                    if before != ui_state.compute_target {
+                        let targ = render_ctx
+                            .iter_targets()
+                            .nth(ui_state.compute_target)
+                            .unwrap()
+                            .name
+                            .to_owned();
+
+                        let _ = render_ctx.set_compute_target(&targ);
+                    }
+                }
+
+                let mut inputs = render_ctx.iter_inputs_mut().collect::<Vec<_>>();
 
                 inputs.sort_by(|(_, a), (_, b)| (a.variant() as u32).cmp(&(b.variant() as u32)));
 
                 let mut last_variant = inputs
                     .first()
                     .map(|(_, val)| val.variant())
-                    .unwrap_or(InputVariant::Event);
+                    .unwrap_or(InputVariant::Point);
 
                 for (name, mut val) in inputs {
                     let variant = val.variant();
@@ -189,7 +219,7 @@ pub fn toasts(ui_state: &mut UiState, ctx: &egui_winit::egui::Context) {
         ui_state
             .toasts
             .error(notification)
-            .set_duration(Some(std::time::Duration::from_secs(5)));
+            .set_duration(Some(std::time::Duration::from_secs(10)));
     }
     ui_state.toasts.show(ctx);
 }
@@ -202,7 +232,7 @@ fn input_widget(
     ui: &mut Ui,
 ) {
     match val.variant() {
-        InputVariant::Image | InputVariant::Audio | InputVariant::AudioFft => {
+        InputVariant::Image => {
             file_selector(ui, val, name, ui_state, message_sender.clone());
         }
         InputVariant::Float => {
@@ -210,17 +240,13 @@ fn input_widget(
             ui.add(Slider::new(&mut v.current, v.min..=v.max).text(name));
             ui.add_space(10.0);
         }
-        InputVariant::Event => {
-            let trigger = val.as_event().unwrap();
-            *trigger = if ui.button(name).clicked() { 1 } else { 0 };
-        }
         InputVariant::Bool => {
             let v = val.as_bool().unwrap();
-            if ui.radio(v.current > 0, name).clicked() {
-                if v.current > 0 {
-                    v.current = 0;
+            if ui.radio(v.current.is_true(), name).clicked() {
+                if v.current.is_true() {
+                    v.current = tweak_shader::input_type::ShaderBool::False;
                 } else {
-                    v.current = 1;
+                    v.current = tweak_shader::input_type::ShaderBool::True;
                 }
             }
         }
@@ -281,41 +307,24 @@ fn file_selector(
             }
 
             if ui.button("X").clicked() {
-                match val.variant() {
-                    InputVariant::Image => {
-                        let _ = sender.send(RunnerMessage::UnloadImage {
-                            var: name.to_owned(),
-                        });
-                    }
-                    InputVariant::Audio | InputVariant::AudioFft => {
-                        let _ = sender.send(RunnerMessage::UnloadAudio {
-                            var: name.to_owned(),
-                        });
-                    }
-                    _ => {}
+                if val.variant() == InputVariant::Image {
+                    let _ = sender.send(RunnerMessage::UnloadImage {
+                        var: name.to_owned(),
+                    });
                 }
                 ui_state.current_loaded_files.remove(name);
             }
-        } else if ui.button("Select File").clicked() {
-            match val.variant() {
-                InputVariant::Image => {
-                    launch_image_or_video_dialog(sender, name.to_owned());
-                }
-                InputVariant::Audio => {
-                    let samples = val.audio_samples();
-                    launch_audio_dialog(sender.clone(), name.to_owned(), samples, false);
-                }
-                InputVariant::AudioFft => {
-                    let samples = val.audio_samples();
-                    launch_audio_dialog(sender.clone(), name.to_owned(), samples, true);
-                }
-                _ => {}
-            }
+        } else if ui.button("Select File").clicked() && val.variant() == InputVariant::Image {
+            launch_image_or_video_dialog(sender, name.to_owned());
         }
     });
 }
 
-fn point_selector(ui: &mut Ui, name: &str, input: &mut tweak_shader::input_type::PointInput) {
+fn point_selector(
+    ui: &mut Ui,
+    name: &str,
+    input: &mut tweak_shader::input_type::BoundedInput<[f32; 2]>,
+) {
     ui.horizontal(|ui| {
         ui.label(name);
         ui.label("X");
@@ -385,26 +394,6 @@ fn launch_screenshot_dialog(sender: std::sync::mpsc::Sender<RunnerMessage>) {
                 buf.set_extension("png");
             }
             let _ = sender.send(RunnerMessage::ScreenShot(buf));
-        }
-    });
-}
-
-fn launch_audio_dialog(
-    sender: std::sync::mpsc::Sender<RunnerMessage>,
-    var: String,
-    max_samples: Option<u32>,
-    fft: bool,
-) {
-    std::thread::spawn(move || {
-        let file_path = tinyfiledialogs::open_file_dialog("Load an audio source", "/", None);
-
-        if let Some(path) = file_path {
-            let _ = sender.send(RunnerMessage::LoadAudio {
-                fft,
-                max_samples,
-                path: path.into(),
-                var,
-            });
         }
     });
 }

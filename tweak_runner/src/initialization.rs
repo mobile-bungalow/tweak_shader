@@ -99,7 +99,8 @@ fn create_device(
     pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: None,
-            required_features: wgpu::Features::PUSH_CONSTANTS,
+            required_features: wgpu::Features::PUSH_CONSTANTS
+                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             required_limits,
         },
         None,
@@ -272,6 +273,7 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
             panic!("Out Of GPU Memory! bailing");
         }
         wgpu::Error::Validation { description, .. } => {
+            eprintln!("{description}");
             let _ = error_proxy.send_event(RunnerMessage::ValidationError(description.clone()));
         }
     }));

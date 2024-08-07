@@ -114,13 +114,16 @@ fn basic_frag_target_tex() {
 
     basic.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
 
+    let mut enc = device.create_command_encoder(&Default::default());
     basic.render(
         &queue,
         &device,
-        &out_tex.create_view(&Default::default()),
+        &mut enc,
+        out_tex.create_view(&Default::default()),
         TEST_RENDER_DIM,
         TEST_RENDER_DIM,
     );
+    queue.submit(Some(enc.finish()));
 
     let mut time_0_bytes = vec![0u8; TEST_RENDER_DIM as usize * TEST_RENDER_DIM as usize * 4_usize];
 
@@ -141,13 +144,16 @@ fn basic_frag_target_tex() {
 
     basic.update_time(1.0);
 
+    let mut enc = device.create_command_encoder(&Default::default());
     basic.render(
         &queue,
         &device,
-        &out_tex.create_view(&Default::default()),
+        &mut enc,
+        out_tex.create_view(&Default::default()),
         TEST_RENDER_DIM,
         TEST_RENDER_DIM,
     );
+    queue.submit(Some(enc.finish()));
 
     read_texture_contents_to_slice(
         &device,
@@ -303,6 +309,48 @@ fn push_constants() {
         &time_1_bytes,
         &png_pixels!("./resources/basic_time_1.png")
     ));
+}
+
+const TOO_MANY_PUSH_CONSTANTS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+
+#pragma utility_block(ShaderInputs)
+layout(push_constant) uniform ShaderInputs {
+    float time;       
+    float time_delta; 
+    float frame_rate; 
+    uint frame_index;  
+    vec4 mouse;       
+    vec4 date;        
+    vec3 resolution;  
+    uint pass_index;   
+};
+
+layout(push_constant) uniform Doofus {
+    uint no;
+};
+
+layout(location = 0) out vec4 out_color; 
+
+void main()
+{
+    out_color = vec4(1.0, sin(time), 1.0, 1.0);
+}
+"#;
+
+#[test]
+fn too_many_push_constants() {
+    let (device, queue) = set_up_wgpu();
+    let basic = RenderContext::new(
+        TOO_MANY_PUSH_CONSTANTS,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    );
+
+    assert!(matches!(basic, Err(tweak_shader::Error::UniformError(_))))
 }
 
 const PERSISTENT_SRC: &str = r#"
@@ -482,20 +530,17 @@ fn shrimple_texture_load_view() {
         &shrimple_bytes,
     );
 
-    tx_load.load_shared_texture_view(
-        tex.create_view(&Default::default()),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-        "input_image",
-    );
+    tx_load.load_shared_texture(&tex, "input_image");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
@@ -518,12 +563,15 @@ fn shrimple_texture_load() {
     let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
@@ -546,12 +594,14 @@ fn float_texture_load() {
     let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let _ = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 }
@@ -575,7 +625,14 @@ fn unaligned_texture() {
     let zac_bytes = png_pixels!("./resources/zac.png");
 
     tx_load.update_resolution([width as f32, height as f32]);
-    tx_load.load_texture(zac_bytes.clone(), "input_image".into(), width, height);
+    let desc = tweak_shader::TextureDesc {
+        width,
+        height,
+        data: &zac_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let output = tx_load.render_to_vec(&queue, &device, width, height);
 
@@ -601,7 +658,15 @@ fn unaligned_texture_from_slice() {
     let zac_bytes = png_pixels!("./resources/zac.png");
 
     tx_load.update_resolution([width as f32, height as f32]);
-    tx_load.load_texture(zac_bytes.clone(), "input_image".into(), width, height);
+
+    let desc = tweak_shader::TextureDesc {
+        width,
+        height,
+        data: &zac_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     let mut vec = vec![0u8; (width * height * 4) as usize];
     tx_load.render_to_slice(
@@ -658,15 +723,9 @@ layout(push_constant) uniform PushCustomInput {
   float pushgain;
 };
 
-#pragma input(audiofft, name="audioFFT", path="./audio.mp3")
 layout(set=0, binding=1) uniform sampler default_sampler;
-layout(set=0, binding=2) uniform texture2D audioFFT;
 
-void main() {
-    // Again, this test fails if you don't reference ABSOLUTELY every uniform
-	out_color = texture(sampler2D(audioFFT, default_sampler), vec2(0.0, 0.0));
-	out_color = strokeColor;
-}
+void main() {}
 "#;
 
 #[test]
@@ -680,8 +739,6 @@ fn inputs_iter() {
         &queue,
     )
     .unwrap();
-
-    inputs_test.get_input("audioFFT").unwrap();
 
     inputs_test.get_input_as::<[f32; 4]>("topColor").unwrap();
     inputs_test.get_input_as::<[f32; 4]>("bottomColor").unwrap();
@@ -705,7 +762,6 @@ fn inputs_iter() {
         "minRange",
         "maxRange",
         "gain",
-        "audioFFT",
         "pushtopColor",
         "pushbottomColor",
         "pushstrokeColor",
@@ -713,9 +769,11 @@ fn inputs_iter() {
         "pushmaxRange",
         "pushgain",
     ];
+
     let refs = inputs_test.iter_inputs_mut().collect::<Vec<_>>();
 
     for name in names {
+        dbg!(name);
         assert!(refs.iter().any(|(s, _)| name == *s))
     }
 
@@ -724,6 +782,176 @@ fn inputs_iter() {
     for name in names {
         assert!(im_refs.iter().any(|(s, _)| name == *s))
     }
+}
+
+const COMPUTE_TARGETS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+#pragma stage(compute)
+
+layout(set=0, binding=1) uniform sampler default_sampler;
+
+#pragma target(name=output_image)
+layout(rgba8, set=0, binding=2) uniform writeonly image2D output_image;
+
+#pragma target(name=scratch_buffer, persistent, width=20)
+layout(rgba8, set=0, binding=3) uniform writeonly image2D scratch_buffer;
+
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() {
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+}
+"#;
+
+#[test]
+fn compute_targets() {
+    let (device, queue) = set_up_wgpu();
+
+    let inputs_test = RenderContext::new(
+        COMPUTE_TARGETS,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    assert!(inputs_test.is_compute());
+
+    let inputs_test = RenderContext::new(
+        COMPUTE_TARGETS,
+        wgpu::TextureFormat::Rgba16Float,
+        &device,
+        &queue,
+    );
+
+    assert!(inputs_test.is_err());
+}
+
+const COMPUTE_BASIC: &str = r#"
+#version 450
+#pragma tweak_shader(version="1.0")
+#pragma stage(compute)
+
+#pragma input(float, name=blue, default=0.0, min=0.0, max=1.0)
+layout(set=1, binding=0) uniform custom_inputs {
+    float blue;
+};
+
+#pragma target(name="output_image")
+layout(rgba8, set=0, binding=1) uniform writeonly image2D output_image;
+
+#pragma target(name="screen_two")
+layout(rgba8, set=0, binding=2) uniform writeonly image2D screen_two;
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() {
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 image_size = imageSize(output_image);
+    
+    vec2 normalized_coords = vec2(pixel_coords) / vec2(image_size);
+    
+    vec4 color = vec4(normalized_coords.x, normalized_coords.y, blue, 1.0);
+    
+    vec4 inverse = vec4(vec3(1.0) - color.xyz, 1.0);
+    imageStore(output_image, pixel_coords, color);
+    imageStore(screen_two, pixel_coords, inverse);
+}
+"#;
+
+#[test]
+fn compute_basic() {
+    let (device, queue) = set_up_wgpu();
+
+    let mut basic = RenderContext::new(
+        COMPUTE_BASIC,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    let grad_1 = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    basic.set_compute_target("screen_two").unwrap();
+
+    let grad_2 = basic.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    assert!(approximately_equivalent(
+        &grad_1,
+        &png_pixels!("./resources/basic_compute.png")
+    ));
+
+    assert!(approximately_equivalent(
+        &grad_2,
+        &png_pixels!("./resources/basic_compute_grad_2.png")
+    ));
+}
+
+const COMPUTE_MULTIPASS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+#pragma stage(compute)
+
+#pragma utility_block(ShaderInputs)
+layout(push_constant) uniform ShaderInputs {
+    float time;       
+    float time_delta; 
+    float frame_rate; 
+    uint frame_index;  
+    vec4 mouse;       
+    vec4 date;        
+    vec3 resolution;  
+    uint pass_index;   
+};
+
+#pragma target(name="output_image", screen)
+layout(rgba8, set=0, binding=1) uniform writeonly image2D output_image;
+
+#pragma pass(0)
+#pragma relay(name="relay", target="relay_target")
+layout(rgba8, set=0, binding=2) uniform writeonly image2D relay;
+layout(set=0, binding=3) uniform texture2D relay_target;
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() {
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 image_size = imageSize(output_image);
+    
+    vec2 normalized_coords = vec2(pixel_coords) / vec2(image_size);
+    
+    vec4 color = vec4(normalized_coords.x, normalized_coords.y, 1.0, 1.0);
+    vec4 mask = texelFetch(relay_target, pixel_coords, 0);
+    float center_circle = step(length(normalized_coords - vec2(0.5)), 0.2);
+
+    if (pass_index == 0) {
+        imageStore(relay, pixel_coords, vec4(center_circle));
+    } else {
+        imageStore(output_image, pixel_coords, mask * color);
+    }
+}
+"#;
+
+#[test]
+fn compute_multipass() {
+    let (device, queue) = set_up_wgpu();
+
+    let mut multipass = RenderContext::new(
+        COMPUTE_MULTIPASS,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    let img = multipass.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
+    assert!(approximately_equivalent(
+        &img,
+        &png_pixels!("./resources/multipass_compute.png")
+    ));
 }
 
 const NO_EXCESS: &str = r#"
@@ -767,7 +995,7 @@ void main()
 #[test]
 fn unmapped_bindings() {
     let (device, queue) = set_up_wgpu();
-    // this will panic if the pipeline can't be set up.
+
     let mut unmapped = RenderContext::new(
         NO_EXCESS,
         wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -840,12 +1068,14 @@ fn letterboxed_shrimple_texture_load() {
     let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
-    tx_load.load_texture(
-        shrimple_bytes.clone(),
-        "input_image".into(),
-        TEST_RENDER_DIM,
-        TEST_RENDER_DIM,
-    );
+    let desc = tweak_shader::TextureDesc {
+        width: TEST_RENDER_DIM,
+        height: TEST_RENDER_DIM,
+        data: &shrimple_bytes,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        stride: None,
+    };
+    tx_load.load_texture("input_image", desc, &device, &queue);
 
     // create 256 x 256 rgba texture, load into letter box, render to it with shrimp
     // render output again with letterbox
@@ -853,7 +1083,6 @@ fn letterboxed_shrimple_texture_load() {
 
     let mut desc = DEFAULT_VIEW;
     desc.format = Some(shared_tex.format());
-    let tex_view = shared_tex.create_view(&desc);
 
     if !letterbox.load_shared_texture(&shared_tex, "image") {
         panic!("Texture Missing!");
@@ -863,7 +1092,16 @@ fn letterboxed_shrimple_texture_load() {
         panic!("Texture FOUND?");
     }
 
-    tx_load.render(&queue, &device, &tex_view, TEST_RENDER_DIM, TEST_RENDER_DIM);
+    let mut enc = device.create_command_encoder(&Default::default());
+    tx_load.render(
+        &queue,
+        &device,
+        &mut enc,
+        shared_tex.create_view(&Default::default()),
+        TEST_RENDER_DIM,
+        TEST_RENDER_DIM,
+    );
+    queue.submit(Some(enc.finish()));
 
     let out = letterbox.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
     //write_texture_to_png(out.as_slice(), "letterbox.png").unwrap();
@@ -893,8 +1131,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             .await
             .expect("Failed to find an appropriate adapter")
     });
-    let mut required_limits =
-        wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+    let mut required_limits = wgpu::Limits::default().using_resolution(adapter.limits());
     required_limits.max_push_constant_size = 128;
 
     let (d, q) = pollster::block_on(async {
@@ -902,7 +1139,9 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::PUSH_CONSTANTS,
+                    required_features: wgpu::Features::PUSH_CONSTANTS
+                        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                        | wgpu::Features::CLEAR_TEXTURE,
                     required_limits,
                 },
                 None,
