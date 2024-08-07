@@ -104,7 +104,7 @@ impl TweakBindGroup {
 
                         let place_holder_tex = device.create_texture_with_data(
                             queue,
-                            &storage_desc(1, 1, format),
+                            &crate::uniforms::storage_desc(1, 1, format),
                             Default::default(),
                             &vec![0; pixel_size as usize],
                         );
@@ -127,11 +127,16 @@ impl TweakBindGroup {
                         let state = match (maybe_target, maybe_relay) {
                             (Some(targ), None) => StorageTextureState::Target {
                                 user_provided_view: None,
+                                previous_view: None,
                                 persistent: targ.persistent,
+                                width: targ.width,
+                                height: targ.height,
                             },
                             (None, Some(relay)) => StorageTextureState::Relay {
                                 persistent: relay.persistent,
                                 target: relay.target.clone(),
+                                width: relay.width,
+                                height: relay.height,
                             },
                             (None, None) => {
                                 return Err(Error::TargetValidation(format!(
@@ -149,7 +154,6 @@ impl TweakBindGroup {
 
                         binding_entries.push(BindingEntry::StorageTexture {
                             binding,
-                            supports_screen: maybe_target.is_some(),
                             state,
                             tex: place_holder_tex,
                             view: placeholder_view,
@@ -347,32 +351,6 @@ pub fn txtr_desc(width: u32, height: u32) -> wgpu::TextureDescriptor<'static> {
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::COPY_DST
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    }
-}
-
-// default texture constructor for storage textures
-pub fn storage_desc(
-    width: u32,
-    height: u32,
-    fmt: wgpu::TextureFormat,
-) -> wgpu::TextureDescriptor<'static> {
-    wgpu::TextureDescriptor {
-        label: None,
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: fmt,
-        usage: wgpu::TextureUsages::COPY_DST
-            | wgpu::TextureUsages::STORAGE_BINDING
-            | wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],

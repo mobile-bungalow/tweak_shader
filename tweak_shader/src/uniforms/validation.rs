@@ -7,6 +7,17 @@ use super::{BindingEntry, Error, GlobalData, PushConstant, Uniforms};
 
 impl Uniforms {
     pub fn validate(&self, document: &Document, format: &wgpu::TextureFormat) -> Result<(), Error> {
+        // Passes in comptue shaders can't specify targets or dimensions
+        if document.stage == wgpu::naga::ShaderStage::Compute {
+            if let Some(i) = document
+                .passes
+                .iter()
+                .position(|pass| !pass.is_compute_compatible())
+            {
+                return Err(Error::ComputePass(i));
+            }
+        }
+
         // Look for input pragmas that are missing bindings
         let missing_input: Vec<_> = document
             .inputs
@@ -69,8 +80,8 @@ impl Uniforms {
             .filter_map(|b| {
                 if let BindingEntry::StorageTexture {
                     tex,
-                    supports_screen: true,
                     name,
+                    state: super::StorageTextureState::Target { .. },
                     ..
                 } = b
                 {

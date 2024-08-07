@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::input_type::*;
 use crate::uniforms;
 use naga::front::glsl;
@@ -39,24 +37,6 @@ pub struct TextureDesc<'a> {
     pub stride: Option<u32>,
     pub data: &'a [u8],
     pub format: wgpu::TextureFormat,
-}
-
-pub enum Targets<'a> {
-    // target first of many targets, or single output, in case of pixel shader.
-    One(wgpu::TextureView),
-    Many(Vec<(&'a str, wgpu::TextureView)>),
-}
-
-impl<'a> Into<Targets<'a>> for wgpu::TextureView {
-    fn into(self) -> Targets<'a> {
-        Targets::One(self)
-    }
-}
-
-impl<'a> Into<Targets<'a>> for Vec<(&'a str, wgpu::TextureView)> {
-    fn into(self) -> Targets<'a> {
-        Targets::Many(self)
-    }
 }
 
 impl RenderContext {
@@ -247,27 +227,45 @@ impl RenderContext {
 
     /// Encodes the renderpasses and buffer copies in the correct order into
     /// `command` encoder targeting `view`.
-    pub fn render<'a, T: Into<Targets<'a>>>(
+    pub fn render<T: Into<Option<wgpu::TextureView>>>(
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        targets: T,
+        target: T,
         width: u32,
         height: u32,
     ) {
-        let tex = targets.into();
-        // resize render targets and copy over texture contents for consistency
-        self.update_pass_textures(command_encoder, device, width, height);
+        let target = target.into();
 
         match &self.pipeline {
             Pipeline::Compute { .. } => {
-                self.encode_compute_render(command_encoder, tex, device, queue, width, height);
+                self.encode_compute_render(command_encoder, target, device, queue, width, height);
             }
             Pipeline::Pixel { .. } => {
+                // resize render targets and copy over texture contents for consistency
+                self.update_pass_textures(command_encoder, device, width, height);
+
                 // write changes to uniforms to gpu mapped buffers
                 self.uniforms.update_uniform_buffers(device, queue);
-                self.encode_pixel_render(device, command_encoder, tex);
+
+                let target = target.unwrap_or_else(|| {
+                    let fmt = self.uniforms.format();
+
+                    if !self
+                        .screen_buffer_cache
+                        .supports_render(&fmt, width, height, None)
+                    {
+                        self.screen_buffer_cache =
+                            BufferCache::new(&fmt, width, height, None, device);
+                    };
+
+                    self.screen_buffer_cache
+                        .tex()
+                        .create_view(&Default::default())
+                });
+
+                self.encode_pixel_render(device, command_encoder, target);
             }
         }
     }
@@ -275,20 +273,27 @@ impl RenderContext {
     fn encode_compute_render(
         &mut self,
         command_encoder: &mut wgpu::CommandEncoder,
-        tex: Targets,
+        target: Option<wgpu::TextureView>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         width: u32,
         height: u32,
     ) {
-        self.uniforms.map_target_views(tex);
+        self.uniforms
+            .adjust_storage_texture_sizes(device, queue, width, height);
 
-        self.uniforms.clear_ephemeral_targets(command_encoder);
+        if let Some(view) = target {
+            self.uniforms.map_target_view(view);
+        }
+
+        self.uniforms
+            .clear_ephemeral_targets_and_buffers(command_encoder);
         // write changes to uniforms to gpu mapped buffers
         self.uniforms.update_uniform_buffers(device, queue);
 
-        //todo!("loop over passes");
-        {
+        for (idx, _) in self.passes.iter().enumerate() {
+            self.uniforms.set_pass_index(idx, command_encoder);
+
             let Pipeline::Compute {
                 ref compute_pipeline,
                 workgroups: [x, y, z],
@@ -316,7 +321,9 @@ impl RenderContext {
             let dispatch_y = (height + y) / y;
 
             rpass.dispatch_workgroups(dispatch_x, dispatch_y, z);
-            //todo!("copy pass targets into their forward buffers... does this mean... passing everything in as a texture");
+            std::mem::drop(rpass);
+
+            self.uniforms.forward_relays(command_encoder);
         }
 
         self.uniforms.reset_targets_to_context_managed();
@@ -327,7 +334,7 @@ impl RenderContext {
         &mut self,
         device: &wgpu::Device,
         command_encoder: &mut wgpu::CommandEncoder,
-        view: Targets,
+        view: wgpu::TextureView,
     ) {
         let Pipeline::Pixel {
             ref pipeline,
@@ -335,14 +342,6 @@ impl RenderContext {
         } = self.pipeline
         else {
             return;
-        };
-
-        //TODO: Bind the many branch to the targets of the pixel shader,
-        // so that pixel shaders can also have fragment writable storage if
-        // the platform supports that.
-        let view = match view {
-            Targets::One(ref view) => view,
-            Targets::Many(_vec) => todo!("get the relevant output view"),
         };
 
         for (idx, pass) in self.passes.iter().enumerate() {
@@ -404,6 +403,7 @@ impl RenderContext {
                 rpass.draw(0..3, 0..1);
             }
 
+            self.uniforms.forward_relays(command_encoder);
             // copy the render pass target over to the
             // texture that is used in the pipeline
             if let Some((target_tex, _)) = pass.render_target_texture.as_ref() {
@@ -597,22 +597,8 @@ impl RenderContext {
             .block_copy_size(Some(wgpu::TextureAspect::All))
             .expect("It seems like you are trying to render to a Depth Stencil. Stop that.");
 
-        let fmt = self.uniforms.format();
-
-        if !self
-            .screen_buffer_cache
-            .supports_render(&fmt, width, height, None)
-        {
-            self.screen_buffer_cache = BufferCache::new(&fmt, width, height, None, device);
-        };
-
-        let view = self
-            .screen_buffer_cache
-            .tex()
-            .create_view(&Default::default());
-
         let mut command_encoder = device.create_command_encoder(&Default::default());
-        self.render(queue, device, &mut command_encoder, view, width, height);
+        self.render(queue, device, &mut command_encoder, None, width, height);
         queue.submit(Some(command_encoder.finish()));
 
         let mut out = vec![0; (width * height * block_size) as usize];
@@ -646,25 +632,8 @@ impl RenderContext {
         slice: &mut [u8],
         stride: Option<u32>,
     ) {
-        let fmt = self.uniforms.format();
-
-        if !self.screen_buffer_cache.supports_render(
-            &fmt,
-            width,
-            height,
-            stride.map(|s| s as usize),
-        ) {
-            self.screen_buffer_cache =
-                BufferCache::new(&fmt, width, height, stride.map(|s| s as usize), device);
-        };
-
-        let view = self
-            .screen_buffer_cache
-            .tex()
-            .create_view(&Default::default());
-
         let mut command_encoder = device.create_command_encoder(&Default::default());
-        self.render(queue, device, &mut command_encoder, view, width, height);
+        self.render(queue, device, &mut command_encoder, None, width, height);
         queue.submit(Some(command_encoder.finish()));
 
         read_texture_contents_to_slice(

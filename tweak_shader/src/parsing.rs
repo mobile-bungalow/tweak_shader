@@ -118,6 +118,15 @@ pub struct RenderPass {
     pub target_texture: Option<String>,
 }
 
+impl RenderPass {
+    pub fn is_compute_compatible(&self) -> bool {
+        self.width.is_none()
+            && self.height.is_none()
+            && self.target_texture.is_none()
+            && !self.persistent
+    }
+}
+
 impl FromStr for RenderPass {
     type Err = Error;
 
@@ -425,6 +434,10 @@ pub fn parse_document(input: &str) -> Result<Document, Error> {
 
         if let Some(target) = line.trim().strip_prefix("#pragma target") {
             desc.targets.push(target.parse()?);
+        }
+
+        if let Some(relay) = line.trim().strip_prefix("#pragma relay") {
+            desc.relays.push(relay.parse()?);
         }
 
         if let Some(sampler) = line.trim().strip_prefix("#pragma sampler") {

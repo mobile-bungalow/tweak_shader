@@ -795,7 +795,7 @@ layout(set=0, binding=1) uniform sampler default_sampler;
 #pragma target(name=output_image, screen)
 layout(rgba8, set=0, binding=2) uniform writeonly image2D output_image;
 
-#pragma target(name=scratch_buffer, persistent)
+#pragma target(name=scratch_buffer, persistent, width=20)
 layout(rgba8, set=0, binding=3) uniform writeonly image2D scratch_buffer;
 
 
@@ -827,6 +827,87 @@ fn compute_targets() {
     );
 
     assert!(inputs_test.is_err());
+}
+
+const COMPUTE_BASIC: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+#pragma stage(compute)
+
+layout(set=0, binding=1) uniform sampler default_sampler;
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() {
+
+}
+"#;
+
+#[test]
+fn compute_basic() {
+    let (device, queue) = set_up_wgpu();
+
+    let basic = RenderContext::new(
+        COMPUTE_BASIC,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &device,
+        &queue,
+    )
+    .unwrap();
+}
+
+const COMPUTE_MULTIPASS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+#pragma stage(compute)
+
+layout(set=0, binding=1) uniform sampler default_sampler;
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() {
+
+}
+"#;
+
+#[test]
+fn compute_multipass() {
+    let (device, queue) = set_up_wgpu();
+
+    let multipass = RenderContext::new(
+        COMPUTE_MULTIPASS,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &device,
+        &queue,
+    )
+    .unwrap();
+}
+
+const COMPUTE_MULTITARGET: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+#pragma stage(compute)
+
+layout(set=0, binding=1) uniform sampler default_sampler;
+
+layout(local_size_x = 16, local_size_y = 16) in;
+void main() {
+
+}
+"#;
+
+#[test]
+fn compute_multitarget() {
+    let (device, queue) = set_up_wgpu();
+
+    let multitarg = RenderContext::new(
+        COMPUTE_MULTITARGET,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &device,
+        &queue,
+    )
+    .unwrap();
 }
 
 const NO_EXCESS: &str = r#"

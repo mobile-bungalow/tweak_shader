@@ -1,9 +1,7 @@
 mod naga_bridge;
 mod validation;
 
-use std::collections::HashMap;
-
-use crate::context::{self, Targets};
+use crate::context;
 use crate::input_type::*;
 use crate::parsing::Document;
 
@@ -78,6 +76,9 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("Pass {0} was not compute compatible, compute passes can only specify an index, targets are managed through relays.")]
+    ComputePass(usize),
+
     #[error("Tried to set output to nonexistant Target {0}.")]
     NonexistantTarget(String),
 
@@ -294,11 +295,10 @@ impl Uniforms {
             .get(addr.set)
             .ok_or(Error::NonexistantTarget(name.to_owned()))?;
 
-        if let Some(BindingEntry::StorageTexture {
-            supports_screen, ..
-        }) = set.binding_entries.get(addr.binding)
+        if let Some(BindingEntry::StorageTexture { state, .. }) =
+            set.binding_entries.get(addr.binding)
         {
-            if *supports_screen {
+            if matches!(state, StorageTextureState::Target { .. }) {
                 self.default_compute_texture = Some(name.to_owned());
                 Ok(())
             } else {
@@ -432,106 +432,167 @@ impl Uniforms {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        targets: &Targets<'a>,
+        screen_width: u32,
+        screen_height: u32,
     ) {
-        match targets {
-            Targets::One(_) => {
-                let groups = self
-                    .sets
-                    .iter_mut()
-                    .map(|e| e.binding_entries.iter_mut())
-                    .flatten();
+        let groups = self
+            .sets
+            .iter_mut()
+            .map(|e| e.binding_entries.iter_mut())
+            .flatten();
 
-                for group in groups {
-                    if let BindingEntry::StorageTexture {
-                        name, tex, view, ..
-                    } = group
-                    {
-                        if Some(&*name) == self.default_compute_texture.as_ref() {
-                            continue;
-                        }
-                    }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut pass_jobs = vec![];
+
+        for target in groups {
+            if let BindingEntry::StorageTexture {
+                tex,
+                state:
+                    StorageTextureState::Relay {
+                        target: tname,
+                        width,
+                        height,
+                        ..
+                    },
+                ..
+            } = target
+            {
+                pass_jobs.push((tex.format(), tname.clone(), width.clone(), height.clone()));
+            }
+
+            if let BindingEntry::StorageTexture {
+                name,
+                tex,
+                view,
+                state:
+                    StorageTextureState::Target { width, height, .. }
+                    | StorageTextureState::Relay { width, height, .. },
+                ..
+            } = target
+            {
+                if Some(&*name) == self.default_compute_texture.as_ref() {
+                    continue;
+                }
+
+                let new_tex = resize_texture(
+                    device,
+                    &mut encoder,
+                    &tex,
+                    width.unwrap_or(screen_width),
+                    height.unwrap_or(screen_height),
+                );
+
+                if let Some(new_tex) = new_tex {
+                    *view = new_tex.create_view(&Default::default());
+                    *tex = new_tex;
                 }
             }
-            Targets::Many(v) => todo!(),
         }
+
+        for (fmt, storage_name, height, width) in pass_jobs {
+            let width = width.unwrap_or(screen_width);
+            let height = height.unwrap_or(screen_height);
+
+            let mut groups = self
+                .sets
+                .iter_mut()
+                .map(|e| e.binding_entries.iter_mut())
+                .flatten();
+
+            let Some((tex, view)) = groups.find_map(|entry| match entry {
+                BindingEntry::Texture {
+                    tex, view, name, ..
+                } if name.as_str() == storage_name.as_str() => Some((tex, view)),
+                _ => None,
+            }) else {
+                continue;
+            };
+
+            if tex.is_none() {
+                let mut desc = txtr_desc(width, height);
+                desc.format = fmt;
+                *tex = Some(device.create_texture(&desc));
+                *view = tex.as_ref().map(|t| t.create_view(&Default::default()));
+            }
+
+            let tex = tex.as_mut().unwrap();
+            let view = view.as_mut().unwrap();
+
+            let new_tex = resize_texture(device, &mut encoder, &tex, width, height);
+
+            if let Some(new_tex) = new_tex {
+                *view = new_tex.create_view(&Default::default());
+                *tex = new_tex;
+            }
+        }
+
+        queue.submit(Some(encoder.finish()));
     }
 
     // replace the views in the storage textures with those
     // proved by the target set.
-    // TODO: this function is really ugly. it will do for now
-    // but it is really deep.
-    pub fn map_target_views<'a>(&mut self, targets: Targets<'a>) {
-        match targets {
-            Targets::One(substitute_view) => {
-                let mut groups = self
-                    .sets
-                    .iter_mut()
-                    .map(|e| {
-                        //TODO: this is hacky! only rebind if needed
-                        // and certainly not as a side effect of a map
-                        e.needs_rebind = true;
-                        e.binding_entries.iter_mut()
-                    })
-                    .flatten();
+    pub fn map_target_view<'a>(&mut self, substitute_view: wgpu::TextureView) {
+        let mut groups = self
+            .sets
+            .iter_mut()
+            .map(|e| {
+                //TODO: this is hacky! only rebind if needed
+                // and certainly not as a side effect of a map
+                e.needs_rebind = true;
+                e.binding_entries.iter_mut()
+            })
+            .flatten();
 
-                let user_view = groups.find_map(|group| {
-                    if let BindingEntry::StorageTexture {
-                        state:
-                            StorageTextureState::Target {
-                                user_provided_view, ..
-                            },
-                        name,
-                        supports_screen: true,
+        let user_view = groups.find_map(|group| {
+            if let BindingEntry::StorageTexture {
+                state:
+                    StorageTextureState::Target {
+                        user_provided_view,
+                        previous_view,
                         ..
-                    } = group
-                    {
-                        if Some(&*name) == self.default_compute_texture.as_ref() {
-                            Some(user_provided_view)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(view) = user_view {
-                    *view = Some(substitute_view);
+                    },
+                name,
+                ..
+            } = group
+            {
+                if Some(&*name) == self.default_compute_texture.as_ref() {
+                    Some((user_provided_view, previous_view))
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+        });
 
-            Targets::Many(textures) => {
-                for (user_tex_name, tex) in textures {
-                    let groups = self
-                        .sets
-                        .iter_mut()
-                        .map(|e| e.binding_entries.iter_mut())
-                        .flatten();
+        if let Some((view, previous)) = user_view {
+            *previous = view.take();
+            *view = Some(substitute_view);
+        }
+    }
 
-                    for group in groups {
-                        match group {
-                            BindingEntry::StorageTexture {
-                                state:
-                                    StorageTextureState::Target {
-                                        user_provided_view, ..
-                                    },
-                                name,
-                                ..
-                            } => {
-                                if user_tex_name == name {
-                                    *user_provided_view = Some(tex);
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        };
+    pub fn forward_relays(&self, command_encoder: &mut wgpu::CommandEncoder) {
+        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
+
+        let relay_textures = groups.filter_map(|group| {
+            extract!(group, BindingEntry::StorageTexture { tex, state: StorageTextureState::Relay { target,.. }, .. } => (target, tex))
+        });
+
+        for (target, tex) in relay_textures {
+            let Some(target_tex) = self.get_texture(target) else {
+                continue;
+            };
+
+            command_encoder.copy_texture_to_texture(
+                tex.as_image_copy(),
+                target_tex.as_image_copy(),
+                wgpu::Extent3d {
+                    width: target_tex.width().min(tex.width()),
+                    height: target_tex.height().min(tex.height()),
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     pub fn reset_targets_to_context_managed(&mut self) {
@@ -545,17 +606,22 @@ impl Uniforms {
             BindingEntry::StorageTexture {
                 state:
                     StorageTextureState::Target {
-                        user_provided_view, ..
+                        user_provided_view,
+                        previous_view,
+                        ..
                     },
                 ..
-            } => *user_provided_view = None,
+            } => *user_provided_view = previous_view.take(),
             _ => {}
         });
     }
 
     // zero the textures of any targets
     // that are not labeled as persistent
-    pub fn clear_ephemeral_targets(&mut self, command_encoder: &mut wgpu::CommandEncoder) {
+    pub fn clear_ephemeral_targets_and_buffers(
+        &mut self,
+        command_encoder: &mut wgpu::CommandEncoder,
+    ) {
         let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
 
         let views = groups.filter_map(|group| {
@@ -590,14 +656,6 @@ impl Uniforms {
         let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
         groups.filter_map(|group| {
             extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Target { persistent, .. }, .. } 
-                    => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
-        })
-    }
-
-    pub fn iter_relays<'a>(&'a self) -> impl Iterator<Item = TargetDescriptor<'a>> {
-        let groups = self.sets.iter().map(|e| e.binding_entries.iter()).flatten();
-        groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Relay { persistent, .. }, .. } 
                     => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
         })
     }
@@ -730,24 +788,6 @@ impl Uniforms {
 
         if let Some(set) = self.sets.get_mut(addr.set) {
             set.override_texture_view(height, width, addr, tex_view)
-        } else {
-            false
-        }
-    }
-
-    pub fn override_texture_view_with_view(
-        &mut self,
-        name: &str,
-        width: u32,
-        height: u32,
-        new_tex_view: wgpu::TextureView,
-    ) -> bool {
-        let Some(addr) = self.lookup_table.get(name) else {
-            return false;
-        };
-
-        if let Some(set) = self.sets.get_mut(addr.set) {
-            set.override_texture_view(height, width, addr, new_tex_view)
         } else {
             false
         }
@@ -982,10 +1022,15 @@ pub enum StorageTextureState {
         // the target texture to forward this into after each pass
         target: String,
         persistent: bool,
+        width: Option<u32>,
+        height: Option<u32>,
     },
     Target {
         user_provided_view: Option<wgpu::TextureView>,
+        previous_view: Option<wgpu::TextureView>,
         persistent: bool,
+        width: Option<u32>,
+        height: Option<u32>,
     },
 }
 
@@ -1023,9 +1068,6 @@ pub enum BindingEntry {
         name: String,
         // storage location
         storage: Storage,
-        // can be copied to view
-        supports_screen: bool,
-        // whether or not this is cleared after every render.
     },
     Texture {
         // the binding index , might not be contiguous
@@ -1321,6 +1363,13 @@ impl TweakBindGroup {
                 self.needs_rebind = true;
                 true
             }
+            Some(BindingEntry::StorageTexture {
+                state:
+                    StorageTextureState::Target {
+                        user_provided_view, ..
+                    },
+                ..
+            }) => true,
             _ => false,
         }
     }
@@ -1500,7 +1549,9 @@ impl TweakBindGroup {
                     ..
                 } => {
                     match state {
-                        StorageTextureState::Relay { target, persistent } => {
+                        StorageTextureState::Relay {
+                            target, persistent, ..
+                        } => {
                             out.push(wgpu::BindGroupEntry {
                                 binding: *binding,
                                 resource: wgpu::BindingResource::TextureView(&*view),
@@ -1529,4 +1580,57 @@ impl TweakBindGroup {
             entries: out.as_slice(),
         })
     }
+}
+
+// default texture constructor for storage textures
+pub fn storage_desc(
+    width: u32,
+    height: u32,
+    fmt: wgpu::TextureFormat,
+) -> wgpu::TextureDescriptor<'static> {
+    wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: fmt,
+        usage: wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    }
+}
+
+fn resize_texture(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    old_tex: &wgpu::Texture,
+    target_width: u32,
+    target_height: u32,
+) -> Option<wgpu::Texture> {
+    if target_width == old_tex.width() && target_height == old_tex.height() {
+        return None;
+    }
+
+    let new_desc = storage_desc(target_width, target_height, old_tex.format());
+    let new_tex = device.create_texture(&new_desc);
+
+    encoder.copy_texture_to_texture(
+        old_tex.as_image_copy(),
+        new_tex.as_image_copy(),
+        wgpu::Extent3d {
+            width: old_tex.width().min(target_width),
+            height: old_tex.height().min(target_height),
+            depth_or_array_layers: 1,
+        },
+    );
+
+    Some(new_tex)
 }
