@@ -792,7 +792,7 @@ const COMPUTE_TARGETS: &str = r#"
 
 layout(set=0, binding=1) uniform sampler default_sampler;
 
-#pragma target(name=output_image, screen)
+#pragma target(name=output_image)
 layout(rgba8, set=0, binding=2) uniform writeonly image2D output_image;
 
 #pragma target(name=scratch_buffer, persistent, width=20)
@@ -839,10 +839,10 @@ layout(set=1, binding=0) uniform custom_inputs {
     float blue;
 };
 
-#pragma target(name="output_image", screen)
+#pragma target(name="output_image")
 layout(rgba8, set=0, binding=1) uniform writeonly image2D output_image;
 
-#pragma target(name="screen_two", screen)
+#pragma target(name="screen_two")
 layout(rgba8, set=0, binding=2) uniform writeonly image2D screen_two;
 
 layout(local_size_x = 16, local_size_y = 16) in;

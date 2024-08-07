@@ -7,8 +7,6 @@ use thiserror::Error;
 
 #[derive(Debug, Clone)]
 pub struct Document {
-    // it's an f32 for convenience sake
-    pub version: f32,
     pub utility_block_name: Option<String>,
     pub stage: wgpu::naga::ShaderStage,
     pub inputs: BTreeMap<String, crate::input_type::InputType>,
@@ -24,7 +22,6 @@ impl Default for Document {
         Document {
             utility_block_name: None,
             stage: wgpu::naga::ShaderStage::Fragment,
-            version: 1.0,
             buffers: vec![],
             passes: vec![],
             targets: vec![],
@@ -66,9 +63,6 @@ pub enum Error {
 
     #[error("Invalid pass descriptor #pragma pass{0}: {1}")]
     MalformedPass(String, String),
-
-    #[error("Invalid Tweak Version directive: #pragma version{0}, must be #pragma version(version=<number>)")]
-    InvalidVersion(String),
 
     #[error("Error in input: {0}")]
     Parsing(String),
@@ -362,18 +356,6 @@ impl FromStr for SamplerDesc {
 
 pub fn parse_document(input: &str) -> Result<Document, Error> {
     let mut desc = Document::default();
-
-    let version = input
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("#pragma version"));
-
-    if let Some(rest) = version {
-        let (_, list) = parse_qualifier_list(rest).map_err(|e| display_err(rest, e))?;
-
-        if let Some(version) = seek::<f32>(&list, "version") {
-            desc.version = version.map_err(|_| Error::InvalidVersion(rest.to_owned()))?;
-        }
-    }
 
     let mut stage = input
         .lines()
@@ -1028,9 +1010,7 @@ mod tests {
             #pragma input  (point , name="foo", max = [100.0, 200.0])
 
             #pragma pass(1, persistent, target="something")
-
-            #pragma version(version = 3.0)
-            
+ 
             #pragma utility_block("Temp")
             "#;
 
