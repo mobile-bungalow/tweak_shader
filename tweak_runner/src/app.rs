@@ -333,27 +333,35 @@ impl App {
                 size.height,
             );
 
-            if let Some(path) = self.ui_state.screen_shot_scheduled.as_ref().cloned() {
-                let (vec, w, h) = if self.ui_state.options.use_screen_size_for_screenshots {
+            if let Some(path) = self.ui_state.screen_shot_scheduled.take() {
+                let (mut vec, w, h) = if self.ui_state.options.use_screen_size_for_screenshots {
                     let vec = self.letter_box.render_to_vec(
                         wgpu_queue,
                         wgpu_device,
                         size.width,
                         size.height,
                     );
+
                     (vec, size.width, size.height)
                 } else {
                     let vec =
                         self.current_shader_mut()
                             .render_to_vec(wgpu_queue, wgpu_device, w, h);
+
                     (vec, w, h)
                 };
+
+                if !self.current_shader_mut().is_compute() {
+                    for chunk in vec.chunks_exact_mut(4) {
+                        // Swap the red and blue channels
+                        chunk.swap(0, 2);
+                    }
+                }
 
                 let dynamic_image =
                     image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w, h, vec).unwrap());
 
                 dynamic_image.save(path).unwrap();
-                self.ui_state.screen_shot_scheduled = None;
             }
         }
 
