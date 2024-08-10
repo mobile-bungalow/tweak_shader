@@ -15,6 +15,10 @@ pub(crate) type VarName = String;
 
 use thiserror::Error;
 
+pub use uniforms::Error as UniformError;
+
+pub use parsing::Error as ParsingError;
+
 /// Joint error type
 #[derive(Debug, Error)]
 pub enum Error {
@@ -24,11 +28,11 @@ pub enum Error {
 
     /// Thrown if a pragma is malformed
     #[error("Document parsing failed: {0}")]
-    DocumentParsingFailed(#[from] crate::parsing::Error),
+    DocumentParsingFailed(#[from] ParsingError),
 
     /// Thrown if uniforms were an unsupported or unexpected format
     /// or not present. Note that currently naga omits unused global
     /// variables and uniforms - this may cause this error to be erroneously thrown.
     #[error("Uniform setup failed: {0}")]
-    UniformError(#[from] crate::uniforms::Error),
+    UniformError(#[from] UniformError),
 }

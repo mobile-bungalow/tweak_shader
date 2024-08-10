@@ -32,21 +32,21 @@ enum Pipeline {
 }
 
 pub struct TextureDesc<'a> {
+    /// the height in pixels of the loaded texture
     pub width: u32,
+    /// The width in pixels of the loaded texture
     pub height: u32,
+    /// if the stride is not width aligned, then this is the number of bytes per row
     pub stride: Option<u32>,
+    /// The raw image data
     pub data: &'a [u8],
+    /// The format the raw data is in.
     pub format: wgpu::TextureFormat,
 }
 
 impl RenderContext {
     /// Creates a new [RenderContext] with a pipeline corresponding to the shader file
     /// capable of rendering to texture views with the specified `format`.
-    ///
-    /// Warning:
-    /// may throw a validation error to the `device`, if you are not certain
-    /// whether or not you are passing in valid shaders you should handles these
-    /// by pushing the proper error scopes.
     pub fn new<Src: AsRef<str>>(
         source: Src,
         format: wgpu::TextureFormat,
