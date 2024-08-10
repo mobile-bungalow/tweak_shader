@@ -25,6 +25,8 @@ Run any of the examples under `tweak_shader_examples` with
 cargo run -- --file tweak_shader_examples/<file_name>
 ```
 
+To include the library in your own WGPU based project, simply add it to your cargo.toml and use it like so:
+
 ```Rust 
  use tweak_shader::RenderContext;
  use wgpu::TextureFormat;
