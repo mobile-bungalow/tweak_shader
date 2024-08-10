@@ -12,17 +12,18 @@
 
 ### Description
 
-The tweak shader library provides a [wgpu](https://github.com/gfx-rs/wgpu) rendering and bookkeeping context for an interative screen shader format.
-It allows users to create shaders reminiscent of ShaderToy or ISF shaders with custom uniforms that can be tweaked at runtime. This can be used for 
+The tweak shader library provides a [wgpu](https://github.com/gfx-rs/wgpu) rendering and bookkeeping context for an interative screen shader format, it currently supports fragment and compute shaders.
+It allows users to create shaders reminiscent of ShaderToy or ISF shaders with any number custom uniforms, textures, buffers, and renderpasses that can be tweaked at runtime. This can be used for 
 composable post processing effects, generative art, reactive visuals and animation, it is intended for inclusion in other wgpu based creative software.
-This Library and it's features were modeled after [ISF](https://github.com/mrRay/ISF_Spec)
 
-This has some notable differences from other glsl based screen shader environments. 
-* It is vulkan-like, UV's and FragCoords increase going down the screen.
-* It is built on wgpu and naga. This means it enforced uniformity of control flow and will throw a validation error if you try to do things
-like access a texture in a conditional block.
 
 ### Usage
+
+Run any of the examples under `tweak_shader_examples` with
+
+```bash
+cargo run -- --file tweak_shader_examples/<file_name>
+```
 
 ```Rust 
  use tweak_shader::RenderContext;
