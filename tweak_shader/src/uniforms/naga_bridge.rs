@@ -1,6 +1,6 @@
 use super::{
-    BindingEntry, Error, ResourceBinding, Storage, StorageTextureState, StructDescriptor,
-    TweakBindGroup, DEFAULT_SAMPLER, DEFAULT_VIEW,
+    BindingEntry, Error, Purpose, ResourceBinding, Storage, StructDescriptor, TweakBindGroup,
+    DEFAULT_SAMPLER, DEFAULT_VIEW,
 };
 use crate::input_type::InputType;
 use wgpu::{
@@ -41,9 +41,7 @@ impl TweakBindGroup {
             let storage = match uniform.space {
                 naga::AddressSpace::Uniform | naga::AddressSpace::Handle => Storage::Uniform,
                 naga::AddressSpace::PushConstant => Storage::Push,
-                naga::AddressSpace::Storage { access } => {
-                    Storage::TextureAccess(storage_access(&access))
-                }
+                naga::AddressSpace::Storage { access } => Storage::Storage(storage_access(&access)),
                 _ => continue,
             };
 
@@ -72,12 +70,24 @@ impl TweakBindGroup {
 
                     binding_entries.push(entry);
 
-                    let entry = wgpu::BindGroupLayoutEntry {
-                        ty: wgpu::BindingType::Buffer {
+                    let buf_ty = match storage {
+                        super::Storage::Uniform => wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
+                        super::Storage::Storage(access) => wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage {
+                                read_only: access == wgpu::StorageTextureAccess::ReadOnly,
+                            },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        _ => unreachable!(),
+                    };
+
+                    let entry = wgpu::BindGroupLayoutEntry {
+                        ty: buf_ty,
                         visibility: if document.stage == naga::ShaderStage::Compute {
                             ShaderStages::COMPUTE
                         } else {
@@ -122,14 +132,14 @@ impl TweakBindGroup {
                             .find(|r| Some(&r.name) == uniform.name.as_ref());
 
                         let state = match (maybe_target, maybe_relay) {
-                            (Some(targ), None) => StorageTextureState::Target {
+                            (Some(targ), None) => Purpose::Target {
                                 user_provided_view: None,
                                 previous_view: None,
                                 persistent: targ.persistent,
                                 width: targ.width,
                                 height: targ.height,
                             },
-                            (None, Some(relay)) => StorageTextureState::Relay {
+                            (None, Some(relay)) => Purpose::Relay {
                                 persistent: relay.persistent,
                                 target: relay.target.clone(),
                                 width: relay.width,
@@ -155,7 +165,6 @@ impl TweakBindGroup {
                             tex: place_holder_tex,
                             view: placeholder_view,
                             name: uniform.name.clone().unwrap_or_default(),
-                            storage,
                         });
                     } else {
                         let input = match document.inputs.get(uniform.name.as_ref().unwrap()) {
@@ -172,7 +181,6 @@ impl TweakBindGroup {
                             view: None,
                             name: uniform.name.clone().unwrap_or_default(),
                             input: input.clone(),
-                            storage,
                         });
                     };
 
@@ -256,6 +264,113 @@ impl TweakBindGroup {
             needs_rebind: false,
             bind_group,
             layout,
+        })
+    }
+}
+
+impl super::BindingEntry {
+    fn new_struct_entry(
+        device: &wgpu::Device,
+        module: &naga::Module,
+        document: &crate::parsing::Document,
+        desc: StructDescriptor,
+    ) -> Result<Self, Error> {
+        let StructDescriptor {
+            padded_size,
+            name,
+            storage,
+            binding,
+            members,
+        } = desc;
+
+        let storage_usage = if matches!(desc.storage, Storage::Storage(_)) {
+            wgpu::BufferUsages::STORAGE
+        } else {
+            wgpu::BufferUsages::empty()
+        };
+
+        // if this is the utility block make sure it lines
+        // up then return it.
+        if document
+            .utility_block_name
+            .as_ref()
+            .is_some_and(|util_name| *util_name == name)
+        {
+            let layout = members.iter().filter_map(|member| {
+                let ty = module.types.get_handle(member.ty).ok()?;
+                let offset = member.offset as usize;
+                Some((ty.inner.clone(), offset))
+            });
+
+            super::GlobalData::validate(layout)?;
+
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: std::mem::size_of::<crate::uniforms::GlobalData>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST
+                    | storage_usage,
+                mapped_at_creation: false,
+            });
+
+            return Ok(Self::UtilityUniformBlock {
+                binding,
+                backing: Default::default(),
+                buffer,
+                storage,
+            });
+        }
+
+        let mut inputs = naga::FastIndexMap::default();
+
+        for member in members {
+            let name = member.name.clone().unwrap_or_default();
+            let ty = module
+                .types
+                .get_handle(member.ty)
+                .map_err(|_| Error::Handle)?;
+
+            if let Some(var) = document.inputs.get(&name) {
+                var.validate(&ty.inner)?;
+                inputs.insert(name, var.clone());
+            } else {
+                let input = InputType::RawBytes(crate::input_type::RawBytes {
+                    inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
+                });
+                inputs.insert(name, input);
+            }
+        }
+
+        let align = inputs
+            .iter()
+            .map(|(_, i)| match i {
+                InputType::Point(_) => std::mem::size_of::<[f32; 4]>(),
+                _ => i.as_bytes().len(),
+            })
+            .max()
+            .unwrap_or(0);
+
+        let align = (align + 15) / 16 * 16;
+
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: padded_size as u64,
+            usage: wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST
+                | storage_usage,
+
+            mapped_at_creation: false,
+        });
+
+        Ok(Self::Buffer {
+            align,
+            backing: vec![0u8; padded_size],
+            binding,
+            inputs,
+            buffer,
+            storage,
         })
     }
 }

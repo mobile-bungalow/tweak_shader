@@ -6,7 +6,7 @@ use crate::input_type::*;
 use crate::parsing::Document;
 
 use naga::{AddressSpace, ResourceBinding, StructMember};
-use naga::{FastHashMap, FastHashSet, FastIndexMap};
+use naga::{FastHashMap, FastIndexMap};
 pub use naga_bridge::*;
 use wgpu::naga;
 
@@ -142,14 +142,20 @@ struct VariableAddress {
     pub binding: usize,
 }
 
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+struct PrivateTexture {
+    name: VarName,
+    pass_target: bool,
+}
+
 #[derive(Debug)]
 pub struct Uniforms {
     /// mapping of names to (set, binding) pairs for faster lookup in the
     /// sets vector
     lookup_table: FastHashMap<VarName, VariableAddress>,
     /// Textures that are either in render targets or not bound
-    /// ton any inputs
-    private_textures: FastHashSet<VarName>,
+    /// to any inputs
+    private_textures: Vec<PrivateTexture>,
     /// The binding location of the utility block if it exists.
     utility_block_addr: Option<VariableAddress>,
     /// The push constants if they exist
@@ -196,7 +202,7 @@ impl Uniforms {
                             binding: binding_idx,
                         });
                     }
-                    BindingEntry::UniformBlock { inputs, .. } => {
+                    BindingEntry::Buffer { inputs, .. } => {
                         for (name, _) in inputs.iter() {
                             lookup_table.insert(
                                 name.clone(),
@@ -232,10 +238,16 @@ impl Uniforms {
         let mut utility_block_data: GlobalData = bytemuck::Zeroable::zeroed();
         utility_block_data.mouse = [0.0, 0.0, -0.0, -0.0];
 
-        let mut private_textures: FastHashSet<_> = document
+        let mut private_textures: Vec<_> = document
             .passes
             .iter()
-            .filter_map(|pass| pass.target_texture.clone())
+            .filter_map(|pass| {
+                PrivateTexture {
+                    name: pass.target_texture.clone()?,
+                    pass_target: true,
+                }
+                .into()
+            })
             .collect();
 
         for tex in sets
@@ -245,13 +257,16 @@ impl Uniforms {
         {
             let texture_in_doc = document.inputs.contains_key(tex);
             if !texture_in_doc {
-                private_textures.insert(tex.clone());
+                private_textures.push(PrivateTexture {
+                    name: tex.clone(),
+                    pass_target: false,
+                });
             }
         }
 
         // During the render pass we need to queue `copy_buffer_to_buffer`
-        // calls in order to update the index in a predictable way. but only
-        // to update the `pass_index` utility block member.
+        // calls in order to update the pass index in a predictable way.
+        // This means we need a sequential list of indices from 0 to max_pass
         let contents = (0..pass_count as u32).collect::<Vec<u32>>();
         let pass_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             contents: bytemuck::cast_slice(&contents),
@@ -259,11 +274,21 @@ impl Uniforms {
             usage: BufferUsages::COPY_SRC,
         });
 
-        let first_target = sets.iter()
+        let first_target = sets
+            .iter()
             .flat_map(|s| s.binding_entries.iter())
-            .find_map(|t| 
-                extract!(t, BindingEntry::StorageTexture {  state: StorageTextureState::Target { .. }, name, .. } => name.clone())
-            );
+            .find_map(|t| {
+                if let BindingEntry::StorageTexture {
+                    state: Purpose::Target { .. },
+                    name,
+                    ..
+                } = t
+                {
+                    name.clone().into()
+                } else {
+                    None
+                }
+            });
 
         let out = Self {
             pass_indices,
@@ -297,7 +322,7 @@ impl Uniforms {
         if let Some(BindingEntry::StorageTexture { state, .. }) =
             set.binding_entries.get(addr.binding)
         {
-            if matches!(state, StorageTextureState::Target { .. }) {
+            if matches!(state, Purpose::Target { .. }) {
                 self.default_compute_texture = Some(name.to_owned());
                 Ok(())
             } else {
@@ -312,12 +337,21 @@ impl Uniforms {
     pub fn copy_into(&mut self, other: &mut Self, device: &wgpu::Device, queue: &wgpu::Queue) {
         // Copy Uniforms
         other.utility_block_data = self.utility_block_data;
+        let default_target = self.default_compute_texture.as_ref().map(|s| s.as_str());
+
+        if other
+            .iter_targets()
+            .find(|t| Some(t.name) == default_target)
+            .is_some()
+        {
+            other.default_compute_texture = self.default_compute_texture.clone();
+        }
 
         for (name, addr) in other.lookup_table.iter() {
             let Some(other_value) = other
                 .sets
                 .get_mut(addr.set)
-                .and_then(|s| s.get_mut(name, addr))
+                .and_then(|s| s.get_input_mut(name, addr))
             else {
                 continue;
             };
@@ -334,54 +368,48 @@ impl Uniforms {
         // Copy Textures
         let mut command_encoder = device.create_command_encoder(&Default::default());
 
-        for (name, addr) in self.lookup_table.iter() {
-            let Some(mut self_image_input) = self
-                .sets
-                .get_mut(addr.set)
-                .and_then(|s| s.get_mut(name, addr))
-            else {
+        for name in self.lookup_table.keys() {
+            let Some(self_image) = self.get_texture(&name) else {
                 continue;
             };
 
-            let Some(other_addr) = other.lookup_table.get(name) else {
+            if other
+                .get_input(&name)
+                .map(|t| !t.is_stored_as_texture())
+                .unwrap_or_default()
+            {
                 continue;
             };
 
-            let Some(mut other_image_input) = other.query_addr_mut(name, &other_addr.clone())
-            else {
-                continue;
+            let width = self_image.width();
+            let height = self_image.height();
+
+            let size = wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
             };
 
-            if let (Some(_), Some(TextureStatus::Loaded { width, height })) = (
-                other_image_input.texture_status(),
-                self_image_input.texture_status(),
-            ) {
-                let size = wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                };
+            let new_tex = if other
+                .private_textures
+                .iter()
+                .find(|s| &s.name == name && s.pass_target)
+                .is_some()
+            {
+                let mut desc = txtr_desc(width, height);
+                desc.format = wgpu::TextureFormat::Rgba16Float;
+                device.create_texture(&desc)
+            } else {
+                device.create_texture(&txtr_desc(width, height))
+            };
 
-                let Some(self_tex) = self.get_texture(name) else {
-                    continue;
-                };
+            command_encoder.copy_texture_to_texture(
+                self_image.as_image_copy(),
+                new_tex.as_image_copy(),
+                size,
+            );
 
-                let new_tex = if other.private_textures.contains(name) {
-                    let mut desc = txtr_desc(width, height);
-                    desc.format = wgpu::TextureFormat::Rgba16Float;
-                    device.create_texture(&desc)
-                } else {
-                    device.create_texture(&txtr_desc(width, height))
-                };
-
-                command_encoder.copy_texture_to_texture(
-                    self_tex.as_image_copy(),
-                    new_tex.as_image_copy(),
-                    size,
-                );
-
-                other.set_texture(name, new_tex);
-            }
+            other.set_texture(name, new_tex);
         }
         queue.submit(Some(command_encoder.finish()));
     }
@@ -446,7 +474,7 @@ impl Uniforms {
                 tex,
                 view,
                 state:
-                    StorageTextureState::Relay {
+                    Purpose::Relay {
                         target: tname,
                         width,
                         height,
@@ -476,7 +504,7 @@ impl Uniforms {
                 tex,
                 view,
                 state:
-                    StorageTextureState::Target {
+                    Purpose::Target {
                         width,
                         height,
                         user_provided_view: None,
@@ -546,20 +574,17 @@ impl Uniforms {
     // replace the views in the storage textures with those
     // proved by the target set.
     pub fn map_target_view(&mut self, substitute_view: wgpu::TextureView) {
-        let mut groups = self
-            .sets
-            .iter_mut()
-            .flat_map(|e| {
-                //TODO: this is hacky! only rebind if needed
-                // and certainly not as a side effect of a map
-                e.needs_rebind = true;
-                e.binding_entries.iter_mut()
-            });
+        let mut groups = self.sets.iter_mut().flat_map(|e| {
+            //TODO: this is hacky! only rebind if needed
+            // and certainly not as a side effect of a map
+            e.needs_rebind = true;
+            e.binding_entries.iter_mut()
+        });
 
         let user_view = groups.find_map(|group| {
             if let BindingEntry::StorageTexture {
                 state:
-                    StorageTextureState::Target {
+                    Purpose::Target {
                         user_provided_view,
                         previous_view,
                         ..
@@ -588,7 +613,7 @@ impl Uniforms {
         let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
 
         let relay_textures = groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { tex, state: StorageTextureState::Relay { target,.. }, .. } => (target, tex))
+            extract!(group, BindingEntry::StorageTexture { tex, state: Purpose::Relay { target,.. }, .. } => (target, tex))
         });
 
         for (target, tex) in relay_textures {
@@ -614,15 +639,20 @@ impl Uniforms {
             .iter_mut()
             .flat_map(|e| e.binding_entries.iter_mut());
 
-        groups.for_each(|group| if let BindingEntry::StorageTexture {
+        groups.for_each(|group| {
+            if let BindingEntry::StorageTexture {
                 state:
-                    StorageTextureState::Target {
+                    Purpose::Target {
                         user_provided_view,
                         previous_view,
                         ..
                     },
                 ..
-            } = group { *user_provided_view = previous_view.take() });
+            } = group
+            {
+                *user_provided_view = previous_view.take()
+            }
+        });
     }
 
     // zero the textures of any targets
@@ -637,7 +667,7 @@ impl Uniforms {
             BindingEntry::StorageTexture {
                 view,
                 state:
-                    StorageTextureState::Target {
+                    Purpose::Target {
                         persistent: false,
                         user_provided_view,
                         ..
@@ -646,10 +676,9 @@ impl Uniforms {
             } => Some(user_provided_view.as_ref().unwrap_or(view)),
             BindingEntry::StorageTexture {
                 view,
-                state:
-                    StorageTextureState::Relay {
-                        persistent: false, ..
-                    },
+                state: Purpose::Relay {
+                    persistent: false, ..
+                },
                 ..
             } => Some(view),
             _ => None,
@@ -681,13 +710,32 @@ impl Uniforms {
     pub fn iter_targets(&self) -> impl Iterator<Item = TargetDescriptor<'_>> {
         let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
         groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Target { persistent, .. }, .. } 
-                    => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
+            if let BindingEntry::StorageTexture {
+                name,
+                tex,
+                state: Purpose::Target { persistent, .. },
+                ..
+            } = group
+            {
+                TargetDescriptor {
+                    persistent: *persistent,
+                    name,
+                    format: tex.format(),
+                }
+                .into()
+            } else {
+                None
+            }
         })
     }
 
     pub fn unload_texture(&mut self, var: &str) -> bool {
-        if self.private_textures.contains(var) {
+        if self
+            .private_textures
+            .iter()
+            .find(|t| &t.name == var)
+            .is_some()
+        {
             return false;
         }
 
@@ -893,7 +941,7 @@ impl Uniforms {
         } else {
             let addr = self.lookup_table.get(name)?;
             let set = self.sets.get_mut(addr.set)?;
-            set.get_mut(name, addr)
+            set.get_input_mut(name, addr)
         }
     }
 
@@ -915,7 +963,7 @@ impl Uniforms {
 
     fn query_addr_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
         let set = self.sets.get_mut(addr.set)?;
-        set.get_mut(name, addr)
+        set.get_input_mut(name, addr)
     }
 
     pub fn iter_custom_uniforms_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
@@ -930,7 +978,7 @@ impl Uniforms {
             .iter_mut()
             .flat_map(|b| b.binding_entries.iter_mut())
             .filter_map(|entry| match entry {
-                BindingEntry::UniformBlock { inputs, .. } => {
+                BindingEntry::Buffer { inputs, .. } => {
                     let iter = inputs.iter_mut().filter_map(|(k, v)| {
                         if !matches!(v, InputType::RawBytes(_)) && self.lookup_table.contains_key(k)
                         {
@@ -942,7 +990,12 @@ impl Uniforms {
                     Some(Box::new(iter) as _)
                 }
                 BindingEntry::Texture { input, name, .. } => {
-                    if self.private_textures.contains(name) {
+                    if self
+                        .private_textures
+                        .iter()
+                        .find(|t| &t.name == name)
+                        .is_some()
+                    {
                         None
                     } else {
                         Some(Box::new(std::iter::once_with(move || (&*name, input.into()))) as _)
@@ -965,14 +1018,19 @@ impl Uniforms {
             .iter()
             .flat_map(|b| b.binding_entries.iter())
             .filter_map(|entry| match entry {
-                BindingEntry::UniformBlock { inputs, .. } => {
+                BindingEntry::Buffer { inputs, .. } => {
                     let iter = inputs.iter().filter(|(k, v)| {
                         !matches!(v, InputType::RawBytes(_)) && self.lookup_table.contains_key(*k)
                     });
                     Some(Box::new(iter) as _)
                 }
                 BindingEntry::Texture { input, name, .. } => {
-                    if self.private_textures.contains(name) {
+                    if self
+                        .private_textures
+                        .iter()
+                        .find(|t| &t.name == name)
+                        .is_some()
+                    {
                         None
                     } else {
                         Some(Box::new(std::iter::once_with(move || (name, input))) as _)
@@ -1043,11 +1101,11 @@ impl Default for GlobalData {
 pub enum Storage {
     Uniform,
     Push,
-    TextureAccess(wgpu::StorageTextureAccess),
+    Storage(wgpu::StorageTextureAccess),
 }
 
 #[derive(Debug)]
-pub enum StorageTextureState {
+pub enum Purpose {
     Relay {
         // the target texture to forward this into after each pass
         target: String,
@@ -1075,7 +1133,7 @@ pub enum BindingEntry {
         // storage location
         storage: Storage,
     },
-    UniformBlock {
+    Buffer {
         backing: Vec<u8>,
         // the binding index , might not be contiguous
         binding: u32,
@@ -1093,11 +1151,9 @@ pub enum BindingEntry {
         binding: u32,
         tex: wgpu::Texture,
         view: wgpu::TextureView,
-        state: StorageTextureState,
+        state: Purpose,
         // variable name
         name: String,
-        // storage location
-        storage: Storage,
     },
     Texture {
         // the binding index , might not be contiguous
@@ -1109,8 +1165,6 @@ pub enum BindingEntry {
         input: InputType,
         // variable name
         name: String,
-        // likely just uniform
-        storage: Storage,
     },
     Sampler {
         // the binding index , might not be contiguous
@@ -1127,114 +1181,6 @@ struct StructDescriptor<'a> {
     storage: Storage,
     binding: u32,
     members: &'a [StructMember],
-}
-
-impl BindingEntry {
-    fn new_struct_entry(
-        device: &wgpu::Device,
-        module: &naga::Module,
-        document: &crate::parsing::Document,
-        desc: StructDescriptor,
-    ) -> Result<Self, Error> {
-        let StructDescriptor {
-            padded_size,
-            name,
-            storage,
-            binding,
-            members,
-        } = desc;
-
-        // if this is the utility block make sure it lines
-        // up then return it.
-        if document
-            .utility_block_name
-            .as_ref()
-            .is_some_and(|util_name| *util_name == name)
-        {
-            let layout = members.iter().filter_map(|member| {
-                let ty = module.types.get_handle(member.ty).ok()?;
-                let offset = member.offset as usize;
-                Some((ty.inner.clone(), offset))
-            });
-
-            GlobalData::validate(layout)?;
-
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: None,
-                size: std::mem::size_of::<crate::uniforms::GlobalData>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-
-            return Ok(Self::UtilityUniformBlock {
-                binding,
-                backing: Default::default(),
-                buffer,
-                storage,
-            });
-        }
-
-        let mut inputs = FastIndexMap::default();
-
-        for member in members {
-            let name = member.name.clone().unwrap_or_default();
-            let ty = module
-                .types
-                .get_handle(member.ty)
-                .map_err(|_| Error::Handle)?;
-
-            if let Some(var) = document.inputs.get(&name) {
-                var.validate(&ty.inner)?;
-                inputs.insert(name, var.clone());
-            } else {
-                let input = InputType::RawBytes(crate::input_type::RawBytes {
-                    inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
-                });
-                inputs.insert(name, input);
-            }
-        }
-
-        let align = inputs
-            .iter()
-            .map(|(_, i)| match i {
-                InputType::Point(_) => std::mem::size_of::<[f32; 4]>(),
-                _ => i.as_bytes().len(),
-            })
-            .max()
-            .unwrap_or(0);
-
-        let align = (align + 15) / 16 * 16;
-
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: padded_size as u64,
-            usage: wgpu::BufferUsages::UNIFORM
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        Ok(Self::UniformBlock {
-            align,
-            backing: vec![0u8; padded_size],
-            binding,
-            inputs,
-            buffer,
-            storage,
-        })
-    }
-
-    pub fn storage(&self) -> Storage {
-        match self {
-            BindingEntry::UtilityUniformBlock { storage, .. }
-            | BindingEntry::UniformBlock { storage, .. }
-            | BindingEntry::StorageTexture { storage, .. }
-            | BindingEntry::Texture { storage, .. } => *storage,
-            BindingEntry::Sampler { .. } => Storage::Uniform,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1337,10 +1283,10 @@ pub struct TweakBindGroup {
 }
 
 impl TweakBindGroup {
-    fn get_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
+    fn get_input_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
         match self.binding_entries.get_mut(addr.binding)? {
             BindingEntry::Texture { input, .. } => Some(input.into()),
-            BindingEntry::UniformBlock { inputs, .. } => inputs.get_mut(name).map(|i| i.into()),
+            BindingEntry::Buffer { inputs, .. } => inputs.get_mut(name).map(|i| i.into()),
             _ => None,
         }
     }
@@ -1394,10 +1340,7 @@ impl TweakBindGroup {
                 true
             }
             Some(BindingEntry::StorageTexture {
-                state:
-                    StorageTextureState::Target {
-                    ..
-                    },
+                state: Purpose::Target { .. },
                 ..
             }) => true,
             _ => false,
@@ -1433,7 +1376,7 @@ impl TweakBindGroup {
     fn get(&self, name: &str, addr: &VariableAddress) -> Option<&InputType> {
         match self.binding_entries.get(addr.binding)? {
             BindingEntry::Texture { input, .. } => Some(input),
-            BindingEntry::UniformBlock { inputs, .. } => inputs.get(name),
+            BindingEntry::Buffer { inputs, .. } => inputs.get(name),
             _ => None,
         }
     }
@@ -1467,7 +1410,7 @@ impl TweakBindGroup {
                     } => {
                         queue.write_buffer(buffer, 0, bytemuck::bytes_of(backing));
                     }
-                    BindingEntry::UniformBlock {
+                    BindingEntry::Buffer {
                         ref mut backing,
                         inputs,
                         buffer,
@@ -1521,7 +1464,7 @@ impl TweakBindGroup {
                         resource: buffer.as_entire_binding(),
                     })
                 }
-                BindingEntry::UniformBlock {
+                BindingEntry::Buffer {
                     ref mut backing,
                     binding,
                     inputs,
@@ -1579,13 +1522,13 @@ impl TweakBindGroup {
                     ..
                 } => {
                     match state {
-                        StorageTextureState::Relay { .. } => {
+                        Purpose::Relay { .. } => {
                             out.push(wgpu::BindGroupEntry {
                                 binding: *binding,
                                 resource: wgpu::BindingResource::TextureView(&*view),
                             });
                         }
-                        StorageTextureState::Target {
+                        Purpose::Target {
                             user_provided_view, ..
                         } => {
                             out.push(wgpu::BindGroupEntry {

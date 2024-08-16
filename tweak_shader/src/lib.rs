@@ -1,4 +1,4 @@
-#[doc = include_str!("../ReadMe.md")]
+#![doc = include_str!("../ReadMe.md")]
 pub(crate) mod context;
 
 pub(crate) mod parsing;
@@ -15,9 +15,11 @@ pub(crate) type VarName = String;
 
 use thiserror::Error;
 
-pub use uniforms::Error as UniformError;
-
+/// Errors that occur while parsing document pragmas.
 pub use parsing::Error as ParsingError;
+
+/// Errors that occur while loading and validating uniforms.
+pub use uniforms::Error as UniformError;
 
 /// Joint error type
 #[derive(Debug, Error)]

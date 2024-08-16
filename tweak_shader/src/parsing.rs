@@ -34,10 +34,10 @@ impl Default for Document {
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Unknown type in input directive: #pragma input{0} must be one of color, float, int, event, point, image, audio, audiofft, bool.")]
+    #[error("Unknown type in input directive: #pragma input{0} must be one of color, float, int, event, point, image, bool.")]
     UnknownType(String),
 
-    #[error("Malformed input directive in #pragma input{0}: must start with one of color, float, int, event, point, image, audio, audiofft, bool.")]
+    #[error("Malformed input directive in #pragma input{0}: must start with one of color, float, int, event, point, image, bool.")]
     MalformedInput(String),
 
     #[error("Missing name in input directive: #pragma input{0}")]
@@ -277,7 +277,7 @@ pub struct Buffer {
     // whether or not this is cleared between renders, (not passes)
     pub persistent: bool,
     // the default allocated length of the buffer
-    pub length: u32,
+    pub length: Option<u32>,
 }
 
 impl FromStr for Buffer {
@@ -463,12 +463,10 @@ fn create_buffer(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Buffer
     let mut buffer = Buffer {
         _name: name.to_owned(),
         persistent: false,
-        length: 0,
+        length: None,
     };
 
-    buffer.length = seek::<u32>(slice, "length")
-        .transpose()?
-        .ok_or(Error::MissinBufferLength)?;
+    buffer.length = seek::<u32>(slice, "length").transpose()?;
 
     buffer.persistent = slice
         .iter()
@@ -951,9 +949,6 @@ mod tests {
         parse_document(pragma).unwrap();
 
         let pragma = "#pragma stage(name=josh)";
-        assert!(parse_document(pragma).is_err());
-
-        let pragma = "#pragma buffer(name=josh)";
         assert!(parse_document(pragma).is_err());
 
         let pragma = "#pragma pass(1, height=1)";

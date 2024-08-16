@@ -35,7 +35,7 @@ impl ShaderBool {
 /// User defined event codes, reset to 0 at the start of the next render.
 pub type EventCode = u32;
 
-// For bounded inputs (Float, Int, Point)
+/// A wrapper For bounded input types, which exist on a user defined range. (Float, Int, Point)
 #[derive(Debug, Clone)]
 pub struct BoundedInput<T>
 where
@@ -47,7 +47,7 @@ where
     pub default: T,
 }
 
-// For discrete inputs (Bool, Color, Event)
+/// A wrapper for discrete input types  (Bool, Color)
 #[derive(Debug, Clone)]
 pub struct DiscreteInput<T>
 where
@@ -170,14 +170,11 @@ impl<'a> MutInput<'a> {
     }
 }
 
+/// An int input, potentially including labels
 pub struct MutInputInt<'a> {
     pub value: &'a mut BoundedInput<i32>,
     pub labels: &'a mut Option<Vec<(String, i32)>>,
 }
-
-pub type AudioFftInput = (TextureStatus, Option<u32>);
-
-pub type AudioInput = (TextureStatus, Option<u32>);
 
 #[derive(Debug, Clone, Copy, Default)]
 /// The state of a texture maintained by this context
@@ -335,6 +332,8 @@ pub enum InputType {
     RawBytes(RawBytes),
 }
 
+/// A trait providing fallible, mutable access to the
+/// contents of a variant container.
 pub trait TryAsMut<T> {
     fn try_as_mut(&mut self) -> Option<&mut T>;
 }

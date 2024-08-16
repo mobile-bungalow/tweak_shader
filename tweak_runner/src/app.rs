@@ -188,7 +188,7 @@ impl App {
             view_formats: &[],
         });
 
-        letter_box.load_shared_texture(&output_texture, "image");
+        letter_box.load_texture_as_view(&output_texture, "image");
 
         let frame_ct = 0;
         let start_time = std::time::Instant::now();
@@ -248,20 +248,11 @@ impl App {
         win_width: u32,
         win_height: u32,
     ) -> Option<()> {
-        self.letter_box
-            .get_input_mut("output_height")?
-            .as_float()?
-            .current = win_height as f32;
+        *self.letter_box.get_input_as::<f32>("output_height")? = win_height as f32;
 
-        self.letter_box
-            .get_input_mut("output_width")?
-            .as_float()?
-            .current = win_width as f32;
+        *self.letter_box.get_input_as::<f32>("output_width")? = win_width as f32;
 
-        self.letter_box
-            .get_input_mut("aspect_ratio")?
-            .as_float()?
-            .current = width as f32 / height as f32;
+        *self.letter_box.get_input_as::<f32>("aspect_ratio")? = width as f32 / height as f32;
 
         Some(())
     }
@@ -476,7 +467,7 @@ impl App {
             });
 
             self.letter_box
-                .load_shared_texture(&output_texture, "image");
+                .load_texture_as_view(&output_texture, "image");
 
             self.output_texture = output_texture;
         }

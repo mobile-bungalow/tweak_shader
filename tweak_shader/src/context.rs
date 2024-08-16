@@ -31,6 +31,7 @@ enum Pipeline {
     },
 }
 
+/// Struct for describing texture data loaded from the CPU
 pub struct TextureDesc<'a> {
     /// the height in pixels of the loaded texture
     pub width: u32,
@@ -136,6 +137,7 @@ impl RenderContext {
                     module: &compute_mod,
                     entry_point: "main",
                     compilation_options: Default::default(),
+                    cache: None,
                 });
 
             Pipeline::Compute {
@@ -156,6 +158,7 @@ impl RenderContext {
             });
 
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                cache: None,
                 layout: Some(&pipeline_layout),
                 fragment: Some(wgpu::FragmentState {
                     compilation_options: Default::default(),
@@ -178,6 +181,7 @@ impl RenderContext {
 
             // HDR pipeline for internal render passes
             let float_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                cache: None,
                 layout: Some(&pipeline_layout),
                 fragment: Some(wgpu::FragmentState {
                     module: &fs_shader_module,
@@ -226,15 +230,17 @@ impl RenderContext {
     }
 
     /// If the shader is a compute shader, then subsequent calls to
-    /// `render_to_vec` and `render_to_slice`. will yield data from those
-    /// storage textures.
+    /// `render_to_vec` and `render_to_slice`. will yield data from the specified
+    /// storage texture.
     pub fn set_compute_target(&mut self, uniform_name: &str) -> Result<(), uniforms::Error> {
         self.uniforms.set_compute_target(uniform_name)?;
         Ok(())
     }
 
-    /// Encodes the renderpasses and buffer copies in the correct order into
-    /// `command` encoder targeting `view`.
+    /// Renders into the view provided by `target`, if target
+    /// is `None` the context will allocate a texture of the proper dimensions
+    /// and render into that instead. This will leave update all buffers and
+    /// storage or render pass textures.
     pub fn render<T: Into<Option<wgpu::TextureView>>>(
         &mut self,
         queue: &wgpu::Queue,
@@ -546,9 +552,10 @@ impl RenderContext {
             .load_texture(name.as_ref(), texture_desc, device, queue);
     }
 
-    /// Creates a texture view and maps it to the pipeline in place of a locally
-    /// stored texture. this will fail if you try to override a render target texture.
-    pub fn load_shared_texture(&mut self, texture: &wgpu::Texture, variable_name: &str) -> bool {
+    /// Loads a shared texture into the context, mapped to the texture under uniform `variable_name`
+    /// This function achieves this by creating a view into the texture, which means calls to
+    /// `get_texture` and `copy_resources_into` will not be able to reproduce this texture.
+    pub fn load_texture_as_view(&mut self, texture: &wgpu::Texture, variable_name: &str) -> bool {
         // fizzle on attempting to write a target texture
         if self
             .passes
@@ -808,15 +815,14 @@ impl RenderContext {
         self.uniforms.global_data_mut().mouse = [x, y, x, y];
     }
 
-    /// Call this to put the mouse in the down up position,
-    /// this sets the sign of the `z` and `w` components of the `mouse`
-    /// uniform negative.
+    /// puts the mouse in the down up position,
+    /// by setting the sign bit of the `z` and `w` components of the `mouse` uniform.
     pub fn set_mouse_up(&mut self) {
         let [x, y, z, w] = self.uniforms.global_data_mut().mouse;
         self.uniforms.global_data_mut().mouse = [x, y, -f32::abs(z), -f32::abs(w)];
     }
 
-    /// Updates the `mouse` uniform.
+    /// Updates the `mouse` uniforms position.
     pub fn set_mouse_input(&mut self, new_position: [f32; 2]) {
         let data = self.uniforms.global_data_mut();
         let last_mouse = data.mouse;

@@ -20,7 +20,6 @@ layout(rgba8, set=0, binding=4) uniform writeonly image2D screen_three;
 layout(set=0, binding=3) uniform texture2D input_image;
 
 layout(local_size_x = 16, local_size_y = 16) in;
-
 void main() {
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 image_size = imageSize(output_image);

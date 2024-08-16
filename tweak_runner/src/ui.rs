@@ -221,7 +221,7 @@ pub fn toasts(ui_state: &mut UiState, ctx: &egui_winit::egui::Context) {
             .error(notification)
             .set_duration(Some(std::time::Duration::from_secs(10)));
     }
-    ui_state.toasts.show(ctx);
+    //ui_state.toasts.show(ctx);
 }
 
 fn input_widget(
@@ -339,34 +339,34 @@ fn point_selector(
         );
     });
 
-    Plot::new(name)
-        .include_x(input.max[0])
-        .include_x(input.min[0])
-        .include_y(input.max[1])
-        .include_y(input.min[1])
-        .allow_zoom(false)
-        .allow_scroll(false)
-        .allow_drag(false)
-        .allow_double_click_reset(false)
-        .view_aspect(2.0)
-        .show(ui, |plot_ui| {
-            if plot_ui.response().clicked()
-                || plot_ui.pointer_coordinate_drag_delta() != egui_winit::egui::Vec2::ZERO
-            {
-                if let Some(p) = plot_ui.pointer_coordinate() {
-                    input.current = [
-                        p.x.clamp(input.min[0] as f64, input.max[0] as f64) as f32,
-                        p.y.clamp(input.min[1] as f64, input.max[1] as f64) as f32,
-                    ];
-                }
-            }
-            let point = Points::new(PlotPoints::Owned(vec![PlotPoint::new(
-                input.current[0],
-                input.current[1],
-            )]))
-            .radius(5.0);
-            plot_ui.points(point);
-        });
+    //Plot::new(name)
+    //    .include_x(input.max[0])
+    //    .include_x(input.min[0])
+    //    .include_y(input.max[1])
+    //    .include_y(input.min[1])
+    //    .allow_zoom(false)
+    //    .allow_scroll(false)
+    //    .allow_drag(false)
+    //    .allow_double_click_reset(false)
+    //    .view_aspect(2.0)
+    //    .show(ui, |plot_ui| {
+    //        if plot_ui.response().clicked()
+    //            || plot_ui.pointer_coordinate_drag_delta() != egui::Vec2::ZERO
+    //        {
+    //            if let Some(p) = plot_ui.pointer_coordinate() {
+    //                input.current = [
+    //                    p.x.clamp(input.min[0] as f64, input.max[0] as f64) as f32,
+    //                    p.y.clamp(input.min[1] as f64, input.max[1] as f64) as f32,
+    //                ];
+    //            }
+    //        }
+    //        let point = Points::new(PlotPoints::Owned(vec![PlotPoint::new(
+    //            input.current[0],
+    //            input.current[1],
+    //        )]))
+    //        .radius(5.0);
+    //        plot_ui.points(point);
+    //    });
 }
 
 pub fn diagnostic_message(ctx: &egui_winit::egui::Context, e: &str) {

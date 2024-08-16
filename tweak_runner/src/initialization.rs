@@ -5,12 +5,10 @@ use egui_wgpu::{
 
 use egui_winit::{
     egui::{Color32, FontData, FontDefinitions},
-    winit::{
-        event_loop::{EventLoop, EventLoopBuilder},
-        window::Window,
-    },
+    winit::{event_loop::EventLoop, window::Window},
     State,
 };
+
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
 
@@ -72,10 +70,12 @@ pub struct Resources {
 }
 
 fn create_window(event_loop: &EventLoop<RunnerMessage>) -> Result<Window, InitializationError> {
-    egui_winit::winit::window::WindowBuilder::new()
+    let attrs = egui_winit::winit::window::Window::default_attributes()
         .with_transparent(true)
-        .with_title("Tweak Shader Runner")
-        .build(event_loop)
+        .with_title("Tweak Shader Runner");
+
+    event_loop
+        .create_window(attrs)
         .map_err(|_| InitializationError::Window)
 }
 
@@ -98,6 +98,7 @@ fn create_device(
     required_limits.max_push_constant_size = 128;
     pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
+            memory_hints: wgpu::MemoryHints::Performance,
             label: None,
             required_features: wgpu::Features::PUSH_CONSTANTS
                 | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
@@ -211,10 +212,15 @@ fn setup_egui(
     });
 
     let id = egui_context.viewport_id();
-    let egui_state = State::new(egui_context.clone(), id, &window, None, None);
+    let egui_state = State::new(egui_context.clone(), id, &window, None, None, None);
 
-    let mut egui_painter =
-        egui_wgpu::winit::Painter::new(egui_wgpu::WgpuConfiguration::default(), 1, None, true);
+    let mut egui_painter = egui_wgpu::winit::Painter::new(
+        egui_wgpu::WgpuConfiguration::default(),
+        1,
+        None,
+        true,
+        false,
+    );
 
     let size_in_pixels = [window.inner_size().width, window.inner_size().height];
     let pixels_per_point = window.scale_factor() as f32;
@@ -226,7 +232,7 @@ fn setup_egui(
         pixels_per_point,
     };
 
-    let egui_renderer = egui_wgpu::Renderer::new(device, *swapchain_format, None, 1);
+    let egui_renderer = egui_wgpu::Renderer::new(device, *swapchain_format, None, 1, false);
 
     Ok(GuiContext {
         egui_renderer,
@@ -238,7 +244,10 @@ fn setup_egui(
 }
 
 pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
-    let event_loop: EventLoop<RunnerMessage> = EventLoopBuilder::with_user_event().build().unwrap();
+    let event_loop: EventLoop<RunnerMessage> = EventLoop::<RunnerMessage>::with_user_event()
+        .build()
+        .unwrap();
+
     let window = create_window(&event_loop)?;
 
     let instance = if cfg!(windows) {

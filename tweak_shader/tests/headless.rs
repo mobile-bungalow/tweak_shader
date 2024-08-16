@@ -494,19 +494,36 @@ fn shrimple_texture_direct() {
     .unwrap();
 
     let shrimple_bytes = png_pixels!("./resources/shrimple_tex.png");
-    let tex = device.create_texture_with_data(
+    tx_load.load_texture(
+        "input_image",
+        tweak_shader::TextureDesc {
+            width: TEST_RENDER_DIM,
+            height: TEST_RENDER_DIM,
+            stride: None,
+            data: &shrimple_bytes,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        },
+        &device,
         &queue,
-        &target_desc(TEST_RENDER_DIM, TEST_RENDER_DIM),
-        Default::default(),
-        &shrimple_bytes,
     );
-    tx_load.load_shared_texture(&tex, "input_image");
-
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
 
     let output = tx_load.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
 
+    let mut tx_load_2 = RenderContext::new(
+        SHRIMPLE_TEXTURE_LOAD,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &device,
+        &queue,
+    )
+    .unwrap();
+
+    tx_load.copy_resources_into(&mut tx_load_2, &device, &queue);
+    tx_load_2.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
+    let output_2 = tx_load_2.render_to_vec(&queue, &device, TEST_RENDER_DIM, TEST_RENDER_DIM);
+
     assert!(approximately_equivalent(&shrimple_bytes, &output));
+    assert!(approximately_equivalent(&shrimple_bytes, &output_2));
 }
 
 #[test]
@@ -530,7 +547,7 @@ fn shrimple_texture_load_view() {
         &shrimple_bytes,
     );
 
-    tx_load.load_shared_texture(&tex, "input_image");
+    tx_load.load_texture_as_view(&tex, "input_image");
 
     tx_load.update_resolution([TEST_RENDER_DIM as f32, TEST_RENDER_DIM as f32]);
     let desc = tweak_shader::TextureDesc {
@@ -773,7 +790,6 @@ fn inputs_iter() {
     let refs = inputs_test.iter_inputs_mut().collect::<Vec<_>>();
 
     for name in names {
-        dbg!(name);
         assert!(refs.iter().any(|(s, _)| name == *s))
     }
 
@@ -1084,13 +1100,9 @@ fn letterboxed_shrimple_texture_load() {
     let mut desc = DEFAULT_VIEW;
     desc.format = Some(shared_tex.format());
 
-    if !letterbox.load_shared_texture(&shared_tex, "image") {
-        panic!("Texture Missing!");
-    }
+    assert!(letterbox.load_texture_as_view(&shared_tex, "image"));
 
-    if letterbox.load_shared_texture(&shared_tex, "shrimp") {
-        panic!("Texture FOUND?");
-    }
+    assert!(!letterbox.load_texture_as_view(&shared_tex, "shrimp"));
 
     let mut enc = device.create_command_encoder(&Default::default());
     tx_load.render(
@@ -1138,6 +1150,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
         adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    memory_hints: wgpu::MemoryHints::Performance,
                     label: None,
                     required_features: wgpu::Features::PUSH_CONSTANTS
                         | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES

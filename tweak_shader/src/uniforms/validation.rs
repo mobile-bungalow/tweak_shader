@@ -80,7 +80,7 @@ impl Uniforms {
                 if let BindingEntry::StorageTexture {
                     tex,
                     name,
-                    state: super::StorageTextureState::Target { .. },
+                    state: super::Purpose::Target { .. },
                     ..
                 } = b
                 {
