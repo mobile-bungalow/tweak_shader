@@ -13,7 +13,7 @@ default = []
 
 [dependencies]
 thiserror = "1.0.63"
-wgpu = { version = "22.0.0", features = ["glsl", "naga-ir"] }
+wgpu = { version = "22.1.0", features = ["glsl", "naga-ir"] }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 nom = "7.1.3"
 

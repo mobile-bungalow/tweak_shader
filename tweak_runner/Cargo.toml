@@ -16,10 +16,10 @@ optional = true
 [dependencies]
 tweak_shader = { path = "../tweak_shader/" }
 egui-notify = { git = "https://github.com/ItsEthra/egui-notify", rev = "b828cbc" }
-egui-wgpu = { git = "https://github.com/emilk/egui", rev = "1f6ae49", features = [
+egui-wgpu = { git = "https://github.com/emilk/egui", rev = "9a1e358", features = [
   "winit",
 ] }
-egui-winit = { git = "https://github.com/emilk/egui", rev = "1f6ae49" }
+egui-winit = { git = "https://github.com/emilk/egui", rev = "9a1e358" }
 egui_plot = { git = "https://github.com/emilk/egui_plot/", rev = "d00fa85" }
 pollster = "0.3.0"
 notify = "6.1.1"

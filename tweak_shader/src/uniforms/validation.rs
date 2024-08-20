@@ -1,5 +1,6 @@
 use crate::input_type::InputType;
 use crate::parsing::Document;
+use bytemuck::offset_of;
 use naga::{ScalarKind, TypeInner};
 use wgpu::naga;
 
@@ -7,7 +8,16 @@ use super::{BindingEntry, Error, GlobalData, PushConstant, Uniforms};
 
 impl Uniforms {
     pub fn validate(&self, document: &Document, format: &wgpu::TextureFormat) -> Result<(), Error> {
-        // Passes in comptue shaders can't specify targets or dimensions
+        self.validate_compute_passes(document)?;
+        self.validate_missing_inputs(document)?;
+        self.validate_missing_targets(document)?;
+        self.validate_target_format_mismatch(format)?;
+        self.validate_missing_buffers(document)?;
+        self.validate_utility_block(document)?;
+        Ok(())
+    }
+
+    fn validate_compute_passes(&self, document: &Document) -> Result<(), Error> {
         if document.stage == wgpu::naga::ShaderStage::Compute {
             if let Some(i) = document
                 .passes
@@ -17,61 +27,66 @@ impl Uniforms {
                 return Err(Error::ComputePass(i));
             }
         }
+        Ok(())
+    }
 
-        // Look for input pragmas that are missing bindings
+    fn validate_missing_inputs(&self, document: &Document) -> Result<(), Error> {
         let missing_input: Vec<_> = document
             .inputs
             .keys()
-            .filter(|key| {
-                let not_in_push_constants =
-                    if let Some(PushConstant::Struct { inputs, .. }) = &self.push_constants {
-                        !inputs.contains_key(*key)
-                    } else {
-                        true
-                    };
-
-                let not_in_uni = self.sets.iter().all(|binding| {
-                    self.lookup_table
-                        .get(*key)
-                        .map(|addr| binding.get(key, addr))
-                        .is_none()
-                });
-                not_in_push_constants && not_in_uni
-            })
+            .filter(|key| self.is_input_missing(key))
             .cloned()
             .collect();
 
-        // error out early if a specified input does not exists
         if !missing_input.is_empty() {
-            Err(Error::MissingInput(missing_input))?;
+            return Err(Error::MissingInput(missing_input));
         }
+        Ok(())
+    }
 
-        // look for storage buffer targets that are missing bindings
+    fn is_input_missing(&self, key: &str) -> bool {
+        let not_in_push_constants = match &self.push_constants {
+            Some(PushConstant::Struct { inputs, .. }) => !inputs.contains_key(key),
+            _ => true,
+        };
+
+        let not_in_uni = self.sets.iter().all(|binding| {
+            self.lookup_table
+                .get(key)
+                .map(|addr| binding.get(key, addr))
+                .is_none()
+        });
+
+        not_in_push_constants && not_in_uni
+    }
+
+    fn validate_missing_targets(&self, document: &Document) -> Result<(), Error> {
         let missing_targets: Vec<_> = document
             .targets
             .iter()
-            .filter_map(|target| {
-                let found = self.sets.iter().find(|binding| {
-                    binding.binding_entries.iter().any(|entry| {
-                        if let BindingEntry::StorageTexture { name, .. } = entry {
-                            *name == target.name
-                        } else {
-                            false
-                        }
-                    })
-                });
-
-                match found {
-                    None => Some(target.name.clone()),
-                    Some(_) => None,
-                }
-            })
+            .filter_map(|target| self.find_missing_target(target))
             .collect();
 
         if !missing_targets.is_empty() {
-            Err(Error::MissingTarget(missing_targets))?;
+            return Err(Error::MissingTarget(missing_targets));
         }
+        Ok(())
+    }
 
+    fn find_missing_target(&self, target: &crate::parsing::Target) -> Option<String> {
+        let found = self.sets.iter().any(|binding| {
+            binding.binding_entries.iter().any(|entry| {
+            matches!(entry, BindingEntry::StorageTexture { name, .. } if *name == target.name)
+        })
+        });
+        if !found {
+            Some(target.name.clone())
+        } else {
+            None
+        }
+    }
+
+    fn validate_target_format_mismatch(&self, format: &wgpu::TextureFormat) -> Result<(), Error> {
         let mismatch_target_textures: Vec<_> = self
             .sets
             .iter()
@@ -93,56 +108,55 @@ impl Uniforms {
             .collect();
 
         if !mismatch_target_textures.is_empty() {
-            Err(Error::TargetFormatMismatch(
+            return Err(Error::TargetFormatMismatch(
                 mismatch_target_textures,
                 *format,
-            ))?;
+            ));
         }
+        Ok(())
+    }
 
-        // look for storage buffer targets that are missing bindings
+    fn validate_missing_buffers(&self, document: &Document) -> Result<(), Error> {
         let missing_buffers: Vec<_> = document
             .buffers
             .iter()
-            .filter_map(|target| {
-                let found = self.sets.iter().find(|binding| {
-                    binding.binding_entries.iter().any(|entry| {
-                        if let BindingEntry::StorageTexture { name, .. } = entry {
-                            *name == target.name
-                        } else {
-                            false
-                        }
-                    })
-                });
-
-                match found {
-                    None => Some(target.name.clone()),
-                    Some(_) => None,
-                }
-            })
+            .filter_map(|target| self.find_missing_buffer(target))
             .collect();
 
         if !missing_buffers.is_empty() {
-            Err(Error::MissingBuffer(missing_buffers))?;
+            return Err(Error::MissingBuffer(missing_buffers));
         }
+        Ok(())
+    }
 
+    fn find_missing_buffer(&self, target: &crate::parsing::Buffer) -> Option<String> {
+        let found = self.sets.iter().any(|binding| {
+            binding.binding_entries.iter().any(|entry| {
+            matches!(entry, BindingEntry::StorageTexture { name, .. } if *name == target.name)
+        })
+        });
+        if !found {
+            Some(target.name.clone())
+        } else {
+            None
+        }
+    }
+
+    fn validate_utility_block(&self, document: &Document) -> Result<(), Error> {
         let no_util_present = !self.sets.iter().any(|b| b.contains_util());
         let push_is_util = self
             .push_constants
             .as_ref()
             .is_some_and(|p| matches!(p, PushConstant::UtilityBlock { .. }));
 
-        // error out early a utility block was specified and not found
         if document.utility_block_name.is_some() && no_util_present && !push_is_util {
-            Err(Error::UtilityBlockMissing(
+            return Err(Error::UtilityBlockMissing(
                 document.utility_block_name.as_ref().unwrap().clone(),
-            ))?;
+            ));
         }
-
         Ok(())
     }
 }
-
-use bytemuck::offset_of;
 
 impl GlobalData {
     pub fn validate(it: impl Iterator<Item = (naga::TypeInner, usize)>) -> Result<(), Error> {

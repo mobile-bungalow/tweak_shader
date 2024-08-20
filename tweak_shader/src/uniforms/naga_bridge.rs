@@ -75,7 +75,7 @@ impl TweakBindGroup {
                         .name
                         .clone()
                         .or(ty.name.clone())
-                        .expect("anonymous global?");
+                        .expect("anonymous global");
 
                     let entry = BindingEntry::new_primitive_entry(
                         device,
@@ -165,9 +165,10 @@ impl super::BindingEntry {
             Storage::Uniform | Storage::Push => {
                 Self::new_uniform_or_push_entry(device, module, document, desc)
             }
-            Storage::Storage(_) => Self::new_storage_entry(device, module, desc),
+            Storage::Storage(_) => Self::new_storage_entry(device, module, desc, document),
         }
     }
+
     fn new_uniform_or_push_entry(
         device: &wgpu::Device,
         module: &naga::Module,
@@ -211,6 +212,7 @@ impl super::BindingEntry {
         device: &wgpu::Device,
         module: &naga::Module,
         desc: PrimitiveDescriptor,
+        document: &crate::parsing::Document,
     ) -> Result<Self, Error> {
         let PrimitiveDescriptor {
             binding,
@@ -222,7 +224,23 @@ impl super::BindingEntry {
             .types
             .get_handle(element_type)
             .map_err(|_| Error::Handle)?;
+
         let padded_size = ty.inner.size(module.to_ctx());
+
+        let document_buffer = document.buffers.iter().find(|b| b.name == desc.name);
+
+        let is_dynamic_size = matches!(
+            ty.inner,
+            naga::TypeInner::Array {
+                size: naga::ArraySize::Dynamic,
+                ..
+            },
+        );
+
+        if is_dynamic_size && document_buffer.and_then(|b| b.length).is_some() {
+            // VALIDATION ERROR
+            return Err(Error::LengthForNondynamicBuffer(desc.name));
+        }
 
         let buffer = create_buffer(device, padded_size as u64, wgpu::BufferUsages::STORAGE);
 

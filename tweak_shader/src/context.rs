@@ -600,6 +600,12 @@ impl RenderContext {
         }
     }
 
+    /// Retrieve a context managed wgpu buffer backing an `input` or a `buffer.`
+    pub fn get_buffer(&mut self, buffer_name: &str) -> Option<&wgpu::Buffer> {
+        //self.uniforms.get_buffer(buffer_name)
+        None
+    }
+
     /// returns an instance of the render context in a default error state
     /// displaying a test card  Useful when displaying errors to the user
     /// if you don't want to bail the program and have no visual fallback.

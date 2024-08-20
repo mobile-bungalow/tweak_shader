@@ -76,17 +76,14 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Pass {0} was not compute compatible, compute passes can only specify an index, targets are managed through relays.")]
+    #[error("Pa1s {0} was not compute compatible, compute passes can only specify an index, targets are managed through relays.")]
     ComputePass(usize),
 
-    #[error("Input {0} specified as inside buffer, Inputs can only be specified in uniforms")]
-    InputInBuffer(String),
+    #[error("Length specified for buffer of static length: {0}")]
+    LengthForNondynamicBuffer(String),
 
     #[error("Buffer(s) specified with no buffer present in pipeline: {0:?}")]
     MissingBuffer(Vec<String>),
-
-    #[error("Buffer specified in uniform address space, buffer pragmas must correspond to an existing buffer.")]
-    BufferInUniform(String),
 
     #[error("Tried to set output to nonexistant Target {0}.")]
     NonexistantTarget(String),
@@ -348,10 +345,7 @@ impl Uniforms {
         other.utility_block_data = self.utility_block_data;
         let default_target = self.default_compute_texture.as_deref();
 
-        if other
-            .iter_targets()
-            .any(|t| Some(t.name) == default_target)
-        {
+        if other.iter_targets().any(|t| Some(t.name) == default_target) {
             other.default_compute_texture = self.default_compute_texture.clone();
         }
 
@@ -742,11 +736,7 @@ impl Uniforms {
     }
 
     pub fn unload_texture(&mut self, var: &str) -> bool {
-        if self
-            .private_textures
-            .iter()
-            .any(|t| &t.name == var)
-        {
+        if self.private_textures.iter().any(|t| &t.name == var) {
             return false;
         }
 
@@ -1028,11 +1018,7 @@ impl Uniforms {
                     Some(Box::new(iter) as _)
                 }
                 BindingEntry::Texture { input, name, .. } => {
-                    if self
-                        .private_textures
-                        .iter()
-                        .any(|t| &t.name == name)
-                    {
+                    if self.private_textures.iter().any(|t| &t.name == name) {
                         None
                     } else {
                         Some(Box::new(std::iter::once_with(move || (&*name, input.into()))) as _)
@@ -1062,11 +1048,7 @@ impl Uniforms {
                     Some(Box::new(iter) as _)
                 }
                 BindingEntry::Texture { input, name, .. } => {
-                    if self
-                        .private_textures
-                        .iter()
-                        .any(|t| &t.name == name)
-                    {
+                    if self.private_textures.iter().any(|t| &t.name == name) {
                         None
                     } else {
                         Some(Box::new(std::iter::once_with(move || (name, input))) as _)
@@ -1210,14 +1192,6 @@ pub enum BindingEntry {
         samp: wgpu::Sampler,
         name: String,
     },
-}
-
-struct StructDescriptor<'a> {
-    padded_size: usize,
-    name: String,
-    storage: Storage,
-    binding: u32,
-    members: &'a [StructMember],
 }
 
 struct PrimitiveDescriptor {
@@ -1635,7 +1609,9 @@ impl TweakBindGroup {
         });
 
         for b in bindings.iter_mut() {
-            if let BindingEntry::Texture { temp_view, .. } = b { *temp_view = None }
+            if let BindingEntry::Texture { temp_view, .. } = b {
+                *temp_view = None
+            }
         }
 
         bind_group
