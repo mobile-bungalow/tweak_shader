@@ -346,12 +346,11 @@ impl Uniforms {
     pub fn copy_into(&mut self, other: &mut Self, device: &wgpu::Device, queue: &wgpu::Queue) {
         // Copy Uniforms
         other.utility_block_data = self.utility_block_data;
-        let default_target = self.default_compute_texture.as_ref().map(|s| s.as_str());
+        let default_target = self.default_compute_texture.as_deref();
 
         if other
             .iter_targets()
-            .find(|t| Some(t.name) == default_target)
-            .is_some()
+            .any(|t| Some(t.name) == default_target)
         {
             other.default_compute_texture = self.default_compute_texture.clone();
         }
@@ -378,12 +377,12 @@ impl Uniforms {
         let mut command_encoder = device.create_command_encoder(&Default::default());
 
         for name in self.lookup_table.keys() {
-            let Some(self_image) = self.get_texture(&name) else {
+            let Some(self_image) = self.get_texture(name) else {
                 continue;
             };
 
             if other
-                .get_input(&name)
+                .get_input(name)
                 .map(|t| !t.is_stored_as_texture())
                 .unwrap_or_default()
             {
@@ -402,8 +401,7 @@ impl Uniforms {
             let new_tex = if other
                 .private_textures
                 .iter()
-                .find(|s| &s.name == name && s.pass_target)
-                .is_some()
+                .any(|s| &s.name == name && s.pass_target)
             {
                 let mut desc = txtr_desc(width, height);
                 desc.format = wgpu::TextureFormat::Rgba16Float;
@@ -747,8 +745,7 @@ impl Uniforms {
         if self
             .private_textures
             .iter()
-            .find(|t| &t.name == var)
-            .is_some()
+            .any(|t| &t.name == var)
         {
             return false;
         }
@@ -1034,8 +1031,7 @@ impl Uniforms {
                     if self
                         .private_textures
                         .iter()
-                        .find(|t| &t.name == name)
-                        .is_some()
+                        .any(|t| &t.name == name)
                     {
                         None
                     } else {
@@ -1069,8 +1065,7 @@ impl Uniforms {
                     if self
                         .private_textures
                         .iter()
-                        .find(|t| &t.name == name)
-                        .is_some()
+                        .any(|t| &t.name == name)
                     {
                         None
                     } else {
@@ -1587,7 +1582,7 @@ impl TweakBindGroup {
                         if let Some(view) = user_provided_override.as_ref() {
                             wgpu::BindGroupEntry {
                                 binding: *binding,
-                                resource: wgpu::BindingResource::TextureView(&view),
+                                resource: wgpu::BindingResource::TextureView(view),
                             }
                         } else if let Some(tex) = tex {
                             let new_view = tex.create_view(&Default::default());
@@ -1640,10 +1635,7 @@ impl TweakBindGroup {
         });
 
         for b in bindings.iter_mut() {
-            match b {
-                BindingEntry::Texture { temp_view, .. } => *temp_view = None,
-                _ => {}
-            }
+            if let BindingEntry::Texture { temp_view, .. } = b { *temp_view = None }
         }
 
         bind_group
