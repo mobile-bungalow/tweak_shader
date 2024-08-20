@@ -5,7 +5,7 @@ use crate::context;
 use crate::input_type::*;
 use crate::parsing::Document;
 
-use naga::{AddressSpace, ResourceBinding, StructMember};
+use naga::{AddressSpace, ResourceBinding};
 use naga::{FastHashMap, FastIndexMap};
 pub use naga_bridge::*;
 use wgpu::naga;
