@@ -31,6 +31,16 @@ enum Pipeline {
     },
 }
 
+/// A wrapper which descibed the state of a texture in the render context.
+pub enum TextureOwnership<'a> {
+    /// A view provided by the user with `load_texture_as_view`.
+    UserOverride(&'a wgpu::TextureView),
+    /// A texture managed by the render context, uploaded with `load_texture`.
+    ContextManaged(&'a wgpu::Texture),
+    /// No texture, the current texture is defaulting to one transparent pixel.
+    NotLoaded,
+}
+
 /// Struct for describing texture data loaded from the CPU
 pub struct TextureDesc<'a> {
     /// the height in pixels of the loaded texture
@@ -127,7 +137,13 @@ impl RenderContext {
         let pipeline = if is_compute {
             let compute_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+                // Currently the naga frontend crashes during validation errors.
+                // so for now we have to work around that end point.
+                source: wgpu::ShaderSource::Glsl {
+                    shader: std::borrow::Cow::Owned(stripped_src),
+                    stage: ShaderStage::Compute,
+                    defines: Default::default(),
+                },
             });
 
             let compute_pipeline =
@@ -147,7 +163,11 @@ impl RenderContext {
         } else {
             let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+                source: wgpu::ShaderSource::Glsl {
+                    shader: std::borrow::Cow::Owned(stripped_src),
+                    stage: ShaderStage::Fragment,
+                    defines: Default::default(),
+                },
             });
 
             let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -572,9 +592,12 @@ impl RenderContext {
 
     /// If a texture is loaded in the pipeline under `variable_name` this will reference to it.
     /// this includes storage textures
-    pub fn get_texture(&mut self, variable_name: &str) -> Option<&wgpu::Texture> {
-        let tex = self.uniforms.get_texture(variable_name)?;
-        Some(tex)
+    pub fn get_texture(&mut self, variable_name: &str) -> TextureOwnership {
+        match self.uniforms.get_texture_ownership(variable_name) {
+            Some(uniforms::TexOwnership::View(v)) => TextureOwnership::UserOverride(v),
+            Some(uniforms::TexOwnership::Tex(v)) => TextureOwnership::ContextManaged(v),
+            None => TextureOwnership::NotLoaded,
+        }
     }
 
     /// returns an instance of the render context in a default error state

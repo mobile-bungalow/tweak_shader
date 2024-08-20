@@ -20,9 +20,12 @@ layout(set = 1, binding = 0) uniform Ecco {
     float foo;
 };
 
+#pragma input(float, name="john", default=0.0, min=0.0, max=1.0)
+layout(set=0, binding=5) uniform float john;
+
 
 void main()
 {
     vec2 st = (gl_FragCoord.xy / resolution.xy);
-    out_color = vec4(foo, sin(time), st.x, 1.0);
+    out_color = vec4(foo + john, 0.0, st.x, 1.0);
 }

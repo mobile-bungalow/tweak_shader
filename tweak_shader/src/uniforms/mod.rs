@@ -79,6 +79,15 @@ pub enum Error {
     #[error("Pass {0} was not compute compatible, compute passes can only specify an index, targets are managed through relays.")]
     ComputePass(usize),
 
+    #[error("Input {0} specified as inside buffer, Inputs can only be specified in uniforms")]
+    InputInBuffer(String),
+
+    #[error("Buffer(s) specified with no buffer present in pipeline: {0:?}")]
+    MissingBuffer(Vec<String>),
+
+    #[error("Buffer specified in uniform address space, buffer pragmas must correspond to an existing buffer.")]
+    BufferInUniform(String),
+
     #[error("Tried to set output to nonexistant Target {0}.")]
     NonexistantTarget(String),
 
@@ -279,7 +288,7 @@ impl Uniforms {
             .flat_map(|s| s.binding_entries.iter())
             .find_map(|t| {
                 if let BindingEntry::StorageTexture {
-                    state: Purpose::Target { .. },
+                    purpose: Purpose::Target { .. },
                     name,
                     ..
                 } = t
@@ -319,7 +328,7 @@ impl Uniforms {
             .get(addr.set)
             .ok_or(Error::NonexistantTarget(name.to_owned()))?;
 
-        if let Some(BindingEntry::StorageTexture { state, .. }) =
+        if let Some(BindingEntry::StorageTexture { purpose: state, .. }) =
             set.binding_entries.get(addr.binding)
         {
             if matches!(state, Purpose::Target { .. }) {
@@ -473,7 +482,7 @@ impl Uniforms {
             if let BindingEntry::StorageTexture {
                 tex,
                 view,
-                state:
+                purpose:
                     Purpose::Relay {
                         target: tname,
                         width,
@@ -503,7 +512,7 @@ impl Uniforms {
                 name,
                 tex,
                 view,
-                state:
+                purpose:
                     Purpose::Target {
                         width,
                         height,
@@ -532,6 +541,7 @@ impl Uniforms {
             }
         }
 
+        //  For each relay resize the relay target texture
         for (fmt, storage_name, height, width) in pass_jobs {
             let width = width.unwrap_or(screen_width);
             let height = height.unwrap_or(screen_height);
@@ -543,7 +553,10 @@ impl Uniforms {
 
             let Some((tex, view)) = groups.find_map(|entry| match entry {
                 BindingEntry::Texture {
-                    tex, view, name, ..
+                    tex,
+                    user_provided_override: view,
+                    name,
+                    ..
                 } if name.as_str() == storage_name.as_str() => Some((tex, view)),
                 _ => None,
             }) else {
@@ -583,7 +596,7 @@ impl Uniforms {
 
         let user_view = groups.find_map(|group| {
             if let BindingEntry::StorageTexture {
-                state:
+                purpose:
                     Purpose::Target {
                         user_provided_view,
                         previous_view,
@@ -613,7 +626,7 @@ impl Uniforms {
         let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
 
         let relay_textures = groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { tex, state: Purpose::Relay { target,.. }, .. } => (target, tex))
+            extract!(group, BindingEntry::StorageTexture { tex, purpose: Purpose::Relay { target,.. }, .. } => (target, tex))
         });
 
         for (target, tex) in relay_textures {
@@ -641,7 +654,7 @@ impl Uniforms {
 
         groups.for_each(|group| {
             if let BindingEntry::StorageTexture {
-                state:
+                purpose:
                     Purpose::Target {
                         user_provided_view,
                         previous_view,
@@ -666,7 +679,7 @@ impl Uniforms {
         let views = groups.filter_map(|group| match group {
             BindingEntry::StorageTexture {
                 view,
-                state:
+                purpose:
                     Purpose::Target {
                         persistent: false,
                         user_provided_view,
@@ -676,9 +689,10 @@ impl Uniforms {
             } => Some(user_provided_view.as_ref().unwrap_or(view)),
             BindingEntry::StorageTexture {
                 view,
-                state: Purpose::Relay {
-                    persistent: false, ..
-                },
+                purpose:
+                    Purpose::Relay {
+                        persistent: false, ..
+                    },
                 ..
             } => Some(view),
             _ => None,
@@ -713,7 +727,7 @@ impl Uniforms {
             if let BindingEntry::StorageTexture {
                 name,
                 tex,
-                state: Purpose::Target { persistent, .. },
+                purpose: Purpose::Target { persistent, .. },
                 ..
             } = group
             {
@@ -883,6 +897,33 @@ impl Uniforms {
             out
         } else {
             false
+        }
+    }
+
+    pub fn get_texture_ownership(&self, name: &str) -> Option<TexOwnership> {
+        let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
+
+        let mut targets = groups.filter_map(
+            |group| extract!(group, BindingEntry::StorageTexture { name, tex, .. } => (name, tex)),
+        );
+
+        if let Some((_, tex)) = targets.find(|(targ_name, _)| targ_name.as_str() == name) {
+            Some(TexOwnership::Tex(tex))
+        } else {
+            let addr = self.lookup_table.get(name)?;
+            let bind_group = self.sets.get(addr.set)?;
+            match bind_group.binding_entries.get(addr.binding)? {
+                BindingEntry::Texture {
+                    tex,
+                    user_provided_override: view,
+                    ..
+                } => match (tex, view) {
+                    (Some(t), None) => TexOwnership::Tex(t).into(),
+                    (_, Some(v)) => TexOwnership::View(v).into(),
+                    (None, None) => None,
+                },
+                _ => None,
+            }
         }
     }
 
@@ -1130,8 +1171,6 @@ pub enum BindingEntry {
         backing: crate::uniforms::GlobalData,
         // buffer this uniform is mapped to
         buffer: wgpu::Buffer,
-        // storage location
-        storage: Storage,
     },
     Buffer {
         backing: Vec<u8>,
@@ -1151,7 +1190,7 @@ pub enum BindingEntry {
         binding: u32,
         tex: wgpu::Texture,
         view: wgpu::TextureView,
-        state: Purpose,
+        purpose: Purpose,
         // variable name
         name: String,
     },
@@ -1160,7 +1199,10 @@ pub enum BindingEntry {
         binding: u32,
         // texture resource if not default
         tex: Option<wgpu::Texture>,
-        view: Option<wgpu::TextureView>,
+        // a user may replace this texture with a shared reference
+        // to an outside texture held in this view.
+        user_provided_override: Option<wgpu::TextureView>,
+        temp_view: Option<wgpu::TextureView>,
         // image status for bookeeping
         input: InputType,
         // variable name
@@ -1181,6 +1223,13 @@ struct StructDescriptor<'a> {
     storage: Storage,
     binding: u32,
     members: &'a [StructMember],
+}
+
+struct PrimitiveDescriptor {
+    name: String,
+    storage: Storage,
+    binding: u32,
+    element_type: naga::Handle<naga::Type>,
 }
 
 #[derive(Debug)]
@@ -1282,6 +1331,11 @@ pub struct TweakBindGroup {
     pub layout: wgpu::BindGroupLayout,
 }
 
+pub enum TexOwnership<'a> {
+    View(&'a wgpu::TextureView),
+    Tex(&'a wgpu::Texture),
+}
+
 impl TweakBindGroup {
     fn get_input_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
         match self.binding_entries.get_mut(addr.binding)? {
@@ -1301,7 +1355,10 @@ impl TweakBindGroup {
     fn unload_texture(&mut self, addr: &VariableAddress) -> bool {
         match self.binding_entries.get_mut(addr.binding) {
             Some(BindingEntry::Texture {
-                tex, view, input, ..
+                tex,
+                user_provided_override: view,
+                input,
+                ..
             }) => {
                 self.needs_rebind = true;
                 *tex = None;
@@ -1315,6 +1372,16 @@ impl TweakBindGroup {
                 *status = TextureStatus::Uninit;
                 true
             }
+            Some(BindingEntry::StorageTexture {
+                purpose:
+                    Purpose::Target {
+                        user_provided_view, ..
+                    },
+                ..
+            }) => {
+                *user_provided_view = None;
+                false
+            }
             _ => false,
         }
     }
@@ -1327,7 +1394,11 @@ impl TweakBindGroup {
         new_view: wgpu::TextureView,
     ) -> bool {
         match self.binding_entries.get_mut(addr.binding) {
-            Some(BindingEntry::Texture { view, input, .. }) => {
+            Some(BindingEntry::Texture {
+                user_provided_override: view,
+                input,
+                ..
+            }) => {
                 let status = match input {
                     InputType::Image(status) => status,
                     _ => {
@@ -1340,9 +1411,15 @@ impl TweakBindGroup {
                 true
             }
             Some(BindingEntry::StorageTexture {
-                state: Purpose::Target { .. },
+                purpose:
+                    Purpose::Target {
+                        user_provided_view, ..
+                    },
                 ..
-            }) => true,
+            }) => {
+                *user_provided_view = Some(new_view);
+                true
+            }
             _ => false,
         }
     }
@@ -1350,7 +1427,10 @@ impl TweakBindGroup {
     fn set_texture(&mut self, addr: &VariableAddress, new_tex: wgpu::Texture) -> bool {
         match self.binding_entries.get_mut(addr.binding) {
             Some(BindingEntry::Texture {
-                tex, view, input, ..
+                tex,
+                user_provided_override: view,
+                input,
+                ..
             }) => {
                 let mut desc = DEFAULT_VIEW;
                 desc.format = Some(new_tex.format());
@@ -1449,105 +1529,124 @@ impl TweakBindGroup {
         queue: &wgpu::Queue,
     ) -> wgpu::BindGroup {
         let placeholder_view = place_holder_tex.create_view(&DEFAULT_VIEW);
-        let mut out = Vec::new();
-        for binding in bindings.iter_mut() {
-            match binding {
-                BindingEntry::UtilityUniformBlock {
-                    binding,
-                    backing,
-                    buffer,
-                    ..
-                } => {
-                    queue.write_buffer(buffer, 0, bytemuck::bytes_of(backing));
-                    out.push(wgpu::BindGroupEntry {
-                        binding: *binding,
-                        resource: buffer.as_entire_binding(),
-                    })
-                }
-                BindingEntry::Buffer {
-                    ref mut backing,
-                    binding,
-                    inputs,
-                    buffer,
-                    align,
-                    ..
-                } => {
-                    let mut offset = 0;
-                    let mut changed = false;
-                    for input in inputs.values() {
-                        let bytes = input.as_bytes();
-
-                        // Calculate the padding needed to satisfy the alignment requirement
-                        let padding = (*align - (offset % *align)) % *align;
-
-                        if bytes.len() > padding {
-                            offset += padding;
+        let out: Vec<_> = bindings
+            .iter_mut()
+            .map(|binding| {
+                match binding {
+                    BindingEntry::UtilityUniformBlock {
+                        binding,
+                        backing,
+                        buffer,
+                        ..
+                    } => {
+                        queue.write_buffer(buffer, 0, bytemuck::bytes_of(backing));
+                        wgpu::BindGroupEntry {
+                            binding: *binding,
+                            resource: buffer.as_entire_binding(),
                         }
+                    }
+                    BindingEntry::Buffer {
+                        ref mut backing,
+                        binding,
+                        inputs,
+                        buffer,
+                        align,
+                        ..
+                    } => {
+                        let mut offset = 0;
+                        let mut changed = false;
+                        for input in inputs.values() {
+                            let bytes = input.as_bytes();
 
-                        changed |= &backing[offset..bytes.len() + offset] != bytes;
-                        backing[offset..bytes.len() + offset].copy_from_slice(bytes);
-                        offset += bytes.len();
-                    }
-                    if changed {
-                        queue.write_buffer(buffer, 0, backing);
-                    }
-                    out.push(wgpu::BindGroupEntry {
-                        binding: *binding,
-                        resource: buffer.as_entire_binding(),
-                    })
-                }
-                BindingEntry::Texture { binding, view, .. } => {
-                    if let Some(view) = view {
-                        out.push(wgpu::BindGroupEntry {
+                            // Calculate the padding needed to satisfy the alignment requirement
+                            let padding = (*align - (offset % *align)) % *align;
+
+                            if bytes.len() > padding {
+                                offset += padding;
+                            }
+
+                            changed |= &backing[offset..bytes.len() + offset] != bytes;
+                            backing[offset..bytes.len() + offset].copy_from_slice(bytes);
+                            offset += bytes.len();
+                        }
+                        if changed {
+                            queue.write_buffer(buffer, 0, backing);
+                        }
+                        wgpu::BindGroupEntry {
                             binding: *binding,
-                            resource: wgpu::BindingResource::TextureView(view),
-                        });
-                    } else {
-                        out.push(wgpu::BindGroupEntry {
-                            binding: *binding,
-                            resource: wgpu::BindingResource::TextureView(&placeholder_view),
-                        });
-                    };
-                }
-                BindingEntry::Sampler { binding, samp, .. } => {
-                    out.push(wgpu::BindGroupEntry {
-                        binding: *binding,
-                        resource: wgpu::BindingResource::Sampler(&*samp),
-                    });
-                }
-                BindingEntry::StorageTexture {
-                    binding,
-                    view,
-                    state,
-                    ..
-                } => {
-                    match state {
-                        Purpose::Relay { .. } => {
-                            out.push(wgpu::BindGroupEntry {
+                            resource: buffer.as_entire_binding(),
+                        }
+                    }
+                    BindingEntry::Texture {
+                        binding,
+                        user_provided_override,
+                        tex,
+                        temp_view,
+                        ..
+                    } => {
+                        if let Some(view) = user_provided_override.as_ref() {
+                            wgpu::BindGroupEntry {
                                 binding: *binding,
-                                resource: wgpu::BindingResource::TextureView(&*view),
-                            });
-                        }
-                        Purpose::Target {
-                            user_provided_view, ..
-                        } => {
-                            out.push(wgpu::BindGroupEntry {
+                                resource: wgpu::BindingResource::TextureView(&view),
+                            }
+                        } else if let Some(tex) = tex {
+                            let new_view = tex.create_view(&Default::default());
+                            *temp_view = Some(new_view);
+
+                            wgpu::BindGroupEntry {
                                 binding: *binding,
                                 resource: wgpu::BindingResource::TextureView(
-                                    user_provided_view.as_ref().unwrap_or(&*view),
+                                    temp_view.as_ref().unwrap(),
                                 ),
-                            });
+                            }
+                        } else {
+                            wgpu::BindGroupEntry {
+                                binding: *binding,
+                                resource: wgpu::BindingResource::TextureView(&placeholder_view),
+                            }
                         }
-                    };
+                    }
+                    BindingEntry::Sampler { binding, samp, .. } => wgpu::BindGroupEntry {
+                        binding: *binding,
+                        resource: wgpu::BindingResource::Sampler(&*samp),
+                    },
+                    BindingEntry::StorageTexture {
+                        binding,
+                        view,
+                        purpose: state,
+                        ..
+                    } => match state {
+                        Purpose::Relay { .. } => wgpu::BindGroupEntry {
+                            binding: *binding,
+                            resource: wgpu::BindingResource::TextureView(&*view),
+                        },
+                        Purpose::Target {
+                            user_provided_view, ..
+                        } => wgpu::BindGroupEntry {
+                            binding: *binding,
+                            resource: wgpu::BindingResource::TextureView(
+                                user_provided_view.as_ref().unwrap_or(&*view),
+                            ),
+                        },
+                    },
                 }
-            }
-        }
+            })
+            .collect();
 
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout,
             entries: out.as_slice(),
-        })
+        });
+
+        for b in bindings.iter_mut() {
+            match b {
+                BindingEntry::Texture { temp_view, .. } => *temp_view = None,
+                _ => {}
+            }
+        }
+
+        bind_group
     }
 }
 

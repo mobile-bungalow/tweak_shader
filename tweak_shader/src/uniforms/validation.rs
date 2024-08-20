@@ -80,7 +80,7 @@ impl Uniforms {
                 if let BindingEntry::StorageTexture {
                     tex,
                     name,
-                    state: super::Purpose::Target { .. },
+                    purpose: super::Purpose::Target { .. },
                     ..
                 } = b
                 {
@@ -97,6 +97,32 @@ impl Uniforms {
                 mismatch_target_textures,
                 *format,
             ))?;
+        }
+
+        // look for storage buffer targets that are missing bindings
+        let missing_buffers: Vec<_> = document
+            .buffers
+            .iter()
+            .filter_map(|target| {
+                let found = self.sets.iter().find(|binding| {
+                    binding.binding_entries.iter().any(|entry| {
+                        if let BindingEntry::StorageTexture { name, .. } = entry {
+                            *name == target.name
+                        } else {
+                            false
+                        }
+                    })
+                });
+
+                match found {
+                    None => Some(target.name.clone()),
+                    Some(_) => None,
+                }
+            })
+            .collect();
+
+        if !missing_buffers.is_empty() {
+            Err(Error::MissingBuffer(missing_buffers))?;
         }
 
         let no_util_present = !self.sets.iter().any(|b| b.contains_util());

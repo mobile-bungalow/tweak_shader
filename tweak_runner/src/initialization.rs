@@ -101,7 +101,9 @@ fn create_device(
             memory_hints: wgpu::MemoryHints::Performance,
             label: None,
             required_features: wgpu::Features::PUSH_CONSTANTS
-                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                | wgpu::Features::SUBGROUP_BARRIER
+                | wgpu::Features::SUBGROUP,
             required_limits,
         },
         None,

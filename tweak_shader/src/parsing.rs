@@ -273,7 +273,7 @@ impl FromStr for InputEntry {
 #[derive(Debug, Clone, Default)]
 pub struct Buffer {
     // name of the buffer variable
-    pub _name: String,
+    pub name: String,
     // whether or not this is cleared between renders, (not passes)
     pub persistent: bool,
     // the default allocated length of the buffer
@@ -461,7 +461,7 @@ pub fn seek<I: TryFrom<QVal, Error = Error>>(
 
 fn create_buffer(name: &String, slice: &[(QVal, Option<QVal>)]) -> Result<Buffer, Error> {
     let mut buffer = Buffer {
-        _name: name.to_owned(),
+        name: name.to_owned(),
         persistent: false,
         length: None,
     };

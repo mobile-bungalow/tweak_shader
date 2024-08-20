@@ -1,6 +1,6 @@
  # Lib Tweak Shader
 
-The Tweak Shader Library provides a rendering and bookkeeping context for an interactive screen shader format. It allows users to create shaders reminiscent of ShaderToy or ISF shaders with custom uniforms that can be tweaked at runtime. The library features support  image,  as well as various other types, including colors, floats, integers, 2D points, and more. The design and functionality of this library were inspired by the ISF (Interactive Shader Format) project.
+The Tweak Shader Library provides a rendering and bookkeeping context for an interactive screen shader format. It allows users to create shaders reminiscent of ShaderToy or ISF shaders with custom uniforms that can be tweaked at runtime. The library features support  image,  as well as various other types, including colors, floats, integers, 2D points, and more.
 
  ## Usage
 
@@ -145,6 +145,27 @@ Compute shaders have unique constraints and some unique pragmas for managing sto
 ```
 The stage pragma can be used to indicate to the context that this is a compute shader, this will not be deduced on it's own. 
 
+### Buffers 
+
+```glsl
+// must be of the form:
+// #pragma target(name="foo", <persistent>, <length=k>)
+
+#pragma buffer(name="memory")
+layout(set=0, binding=1) uniform buffer SomeStruct {
+  vec2 p1;  
+  vec2 p2;  
+}[100] memory;
+
+#pragma buffer(name="particles", persistent, length=200)
+layout(set=0, binding=1) uniform buffer SomeStruct {
+  uint id;
+  vec2 velocity;
+  vec2 loc;
+}[] particles;
+```
+
+The buffer pragma adds a buffer of arbitrary length and layout to the pipeline. It can be made persistent between passes.
 
 ### Targets
 

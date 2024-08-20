@@ -1,11 +1,12 @@
 use super::{
-    BindingEntry, Error, Purpose, ResourceBinding, Storage, StructDescriptor, TweakBindGroup,
+    BindingEntry, Error, PrimitiveDescriptor, Purpose, ResourceBinding, Storage, TweakBindGroup,
     DEFAULT_SAMPLER, DEFAULT_VIEW,
 };
+
 use crate::input_type::InputType;
 use wgpu::{
     self,
-    naga::{self, StorageAccess},
+    naga::{self, StorageAccess, TypeInner},
     util::DeviceExt,
     ShaderStages, TextureFormat,
 };
@@ -46,25 +47,45 @@ impl TweakBindGroup {
             };
 
             match &ty.inner {
-                naga::TypeInner::Array {
-                    base: _,
-                    size: _,
-                    stride: _,
+                naga::TypeInner::Image {
+                    dim,
+                    arrayed,
+                    class,
                 } => {
-                    // How would we even support these?
-                    return Err(Error::UnsupportedUniformType("Error loading uniform with an array type. We do not support uniform arrays at this time.".into()));
+                    let layout = image_entry_from_naga(class, dim, *arrayed, binding, format)?;
+                    let out = make_image(binding, uniform, &layout, device, queue, document)?;
+                    binding_entries.push(out);
+                    layout_entries.push(layout);
                 }
-                naga::TypeInner::Struct { members, span } => {
-                    let entry = BindingEntry::new_struct_entry(
+                naga::TypeInner::Sampler { .. } => make_sampler(
+                    binding,
+                    uniform,
+                    device,
+                    document,
+                    format,
+                    &mut binding_entries,
+                    &mut layout_entries,
+                ),
+                naga::TypeInner::Scalar(_)
+                | naga::TypeInner::Array { .. }
+                | naga::TypeInner::Vector { .. }
+                | naga::TypeInner::Struct { .. }
+                | naga::TypeInner::Matrix { .. } => {
+                    let unique_name = uniform
+                        .name
+                        .clone()
+                        .or(ty.name.clone())
+                        .expect("anonymous global?");
+
+                    let entry = BindingEntry::new_primitive_entry(
                         device,
                         module,
                         document,
-                        StructDescriptor {
-                            padded_size: *span as usize,
-                            name: ty.name.clone().unwrap_or_default(),
+                        PrimitiveDescriptor {
+                            name: unique_name,
                             storage,
                             binding,
-                            members: members.as_slice(),
+                            element_type: uniform.ty,
                         },
                     )?;
 
@@ -88,141 +109,6 @@ impl TweakBindGroup {
 
                     let entry = wgpu::BindGroupLayoutEntry {
                         ty: buf_ty,
-                        visibility: if document.stage == naga::ShaderStage::Compute {
-                            ShaderStages::COMPUTE
-                        } else {
-                            ShaderStages::FRAGMENT
-                        },
-                        binding,
-                        count: None,
-                    };
-
-                    layout_entries.push(entry);
-                }
-                naga::TypeInner::Image {
-                    dim,
-                    arrayed,
-                    class,
-                } => {
-                    let entry = image_entry_from_naga(class, dim, *arrayed, binding, format)?;
-
-                    if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
-                        let pixel_size = format.block_copy_size(None).unwrap();
-
-                        let place_holder_tex = device.create_texture_with_data(
-                            queue,
-                            &crate::uniforms::storage_desc(1, 1, format),
-                            Default::default(),
-                            &vec![0; pixel_size as usize],
-                        );
-
-                        let mut view_desc = DEFAULT_VIEW;
-                        view_desc.format = Some(format);
-
-                        let placeholder_view = place_holder_tex.create_view(&view_desc);
-
-                        let maybe_target = document
-                            .targets
-                            .iter()
-                            .find(|t| Some(&t.name) == uniform.name.as_ref());
-
-                        let maybe_relay = document
-                            .relays
-                            .iter()
-                            .find(|r| Some(&r.name) == uniform.name.as_ref());
-
-                        let state = match (maybe_target, maybe_relay) {
-                            (Some(targ), None) => Purpose::Target {
-                                user_provided_view: None,
-                                previous_view: None,
-                                persistent: targ.persistent,
-                                width: targ.width,
-                                height: targ.height,
-                            },
-                            (None, Some(relay)) => Purpose::Relay {
-                                persistent: relay.persistent,
-                                target: relay.target.clone(),
-                                width: relay.width,
-                                height: relay.height,
-                            },
-                            (None, None) => {
-                                return Err(Error::TargetValidation(format!(
-                                    "Storage texture not found {}",
-                                    uniform.name.clone().unwrap_or_default()
-                                )))
-                            }
-                            (Some(_), Some(_)) => {
-                                return Err(Error::TargetValidation(format!(
-                                    "Storage texture referenced in both a target and a relay {}",
-                                    uniform.name.clone().unwrap_or_default()
-                                )))
-                            }
-                        };
-
-                        binding_entries.push(BindingEntry::StorageTexture {
-                            binding,
-                            state,
-                            tex: place_holder_tex,
-                            view: placeholder_view,
-                            name: uniform.name.clone().unwrap_or_default(),
-                        });
-                    } else {
-                        let input = match document.inputs.get(uniform.name.as_ref().unwrap()) {
-                            Some(v) if v.is_stored_as_texture() => v.clone(),
-                            Some(v) => {
-                                Err(Error::InputTypeErr(format!("{v}"), "image".to_owned()))?
-                            }
-                            None => InputType::Image(crate::input_type::TextureStatus::Uninit),
-                        };
-
-                        binding_entries.push(BindingEntry::Texture {
-                            binding,
-                            tex: None,
-                            view: None,
-                            name: uniform.name.clone().unwrap_or_default(),
-                            input: input.clone(),
-                        });
-                    };
-
-                    layout_entries.push(entry);
-                }
-                naga::TypeInner::Sampler { .. } => {
-                    let mut samp_desc = DEFAULT_SAMPLER;
-
-                    if let Some(name) = uniform.name.as_ref() {
-                        if let Some(config) = document.samplers.iter().find(|e| &e.name == name) {
-                            samp_desc.mag_filter = config.filter_mode;
-                            samp_desc.min_filter = config.filter_mode;
-                            samp_desc.mipmap_filter = config.filter_mode;
-
-                            samp_desc.address_mode_u = config.clamp_mode;
-                            samp_desc.address_mode_v = config.clamp_mode;
-                            samp_desc.address_mode_w = config.clamp_mode;
-                        }
-                    };
-
-                    if matches!(format, wgpu::TextureFormat::Rgba32Float) {
-                        samp_desc.mag_filter = wgpu::FilterMode::Nearest;
-                        samp_desc.min_filter = wgpu::FilterMode::Nearest;
-                        samp_desc.mipmap_filter = wgpu::FilterMode::Nearest;
-                    };
-
-                    let samp = device.create_sampler(&samp_desc);
-
-                    binding_entries.push(BindingEntry::Sampler {
-                        binding,
-                        samp,
-                        name: uniform.name.clone().unwrap_or_default(),
-                    });
-
-                    let sampler_type = if matches!(format, wgpu::TextureFormat::Rgba32Float) {
-                        wgpu::SamplerBindingType::NonFiltering
-                    } else {
-                        wgpu::SamplerBindingType::Filtering
-                    };
-
-                    let entry = wgpu::BindGroupLayoutEntry {
-                        ty: wgpu::BindingType::Sampler(sampler_type),
                         visibility: if document.stage == naga::ShaderStage::Compute {
                             ShaderStages::COMPUTE
                         } else {
@@ -269,100 +155,47 @@ impl TweakBindGroup {
 }
 
 impl super::BindingEntry {
-    fn new_struct_entry(
+    fn new_primitive_entry(
         device: &wgpu::Device,
         module: &naga::Module,
         document: &crate::parsing::Document,
-        desc: StructDescriptor,
+        desc: PrimitiveDescriptor,
     ) -> Result<Self, Error> {
-        let StructDescriptor {
-            padded_size,
+        match desc.storage {
+            Storage::Uniform | Storage::Push => {
+                Self::new_uniform_or_push_entry(device, module, document, desc)
+            }
+            Storage::Storage(_) => Self::new_storage_entry(device, module, desc),
+        }
+    }
+    fn new_uniform_or_push_entry(
+        device: &wgpu::Device,
+        module: &naga::Module,
+        document: &crate::parsing::Document,
+        desc: PrimitiveDescriptor,
+    ) -> Result<Self, Error> {
+        let PrimitiveDescriptor {
             name,
-            storage,
             binding,
-            members,
+            element_type,
+            ..
         } = desc;
 
-        let storage_usage = if matches!(desc.storage, Storage::Storage(_)) {
-            wgpu::BufferUsages::STORAGE
-        } else {
-            wgpu::BufferUsages::empty()
-        };
+        let ty = module
+            .types
+            .get_handle(element_type)
+            .map_err(|_| Error::Handle)?;
+        let padded_size = ty.inner.size(module.to_ctx()) as usize;
 
-        // if this is the utility block make sure it lines
-        // up then return it.
-        if document
-            .utility_block_name
-            .as_ref()
-            .is_some_and(|util_name| *util_name == name)
-        {
-            let layout = members.iter().filter_map(|member| {
-                let ty = module.types.get_handle(member.ty).ok()?;
-                let offset = member.offset as usize;
-                Some((ty.inner.clone(), offset))
-            });
+        let buffer = create_buffer(device, padded_size as u64, wgpu::BufferUsages::UNIFORM);
 
-            super::GlobalData::validate(layout)?;
-
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: None,
-                size: std::mem::size_of::<crate::uniforms::GlobalData>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_DST
-                    | storage_usage,
-                mapped_at_creation: false,
-            });
-
-            return Ok(Self::UtilityUniformBlock {
-                binding,
-                backing: Default::default(),
-                buffer,
-                storage,
-            });
+        if is_utility_block(document, &name) {
+            return Self::create_utility_block(device, module, ty, binding);
         }
 
-        let mut inputs = naga::FastIndexMap::default();
-
-        for member in members {
-            let name = member.name.clone().unwrap_or_default();
-            let ty = module
-                .types
-                .get_handle(member.ty)
-                .map_err(|_| Error::Handle)?;
-
-            if let Some(var) = document.inputs.get(&name) {
-                var.validate(&ty.inner)?;
-                inputs.insert(name, var.clone());
-            } else {
-                let input = InputType::RawBytes(crate::input_type::RawBytes {
-                    inner: vec![0; ty.inner.size(module.to_ctx()) as usize],
-                });
-                inputs.insert(name, input);
-            }
-        }
-
-        let align = inputs
-            .iter()
-            .map(|(_, i)| match i {
-                InputType::Point(_) => std::mem::size_of::<[f32; 4]>(),
-                _ => i.as_bytes().len(),
-            })
-            .max()
-            .unwrap_or(0);
-
-        let align = (align + 15) / 16 * 16;
-
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: padded_size as u64,
-            usage: wgpu::BufferUsages::UNIFORM
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST
-                | storage_usage,
-
-            mapped_at_creation: false,
-        });
+        let members = get_members(module, ty, name)?;
+        let inputs = create_inputs(document, module, &members)?;
+        let align = calculate_alignment(&ty.inner, module);
 
         Ok(Self::Buffer {
             align,
@@ -370,8 +203,299 @@ impl super::BindingEntry {
             binding,
             inputs,
             buffer,
-            storage,
+            storage: desc.storage,
         })
+    }
+
+    fn new_storage_entry(
+        device: &wgpu::Device,
+        module: &naga::Module,
+        desc: PrimitiveDescriptor,
+    ) -> Result<Self, Error> {
+        let PrimitiveDescriptor {
+            binding,
+            element_type,
+            ..
+        } = desc;
+
+        let ty = module
+            .types
+            .get_handle(element_type)
+            .map_err(|_| Error::Handle)?;
+        let padded_size = ty.inner.size(module.to_ctx());
+
+        let buffer = create_buffer(device, padded_size as u64, wgpu::BufferUsages::STORAGE);
+
+        let align = calculate_alignment(&ty.inner, module);
+
+        Ok(Self::Buffer {
+            align,
+            backing: vec![0u8; padded_size as usize],
+            binding,
+            inputs: Default::default(),
+            buffer,
+            storage: desc.storage,
+        })
+    }
+
+    fn create_utility_block(
+        device: &wgpu::Device,
+        module: &naga::Module,
+        ty: &naga::Type,
+        binding: u32,
+    ) -> Result<Self, Error> {
+        let TypeInner::Struct { members, .. } = &ty.inner else {
+            return Err(Error::UtilityBlockType);
+        };
+
+        let layout = members.iter().filter_map(|member| {
+            let ty = module.types.get_handle(member.ty).ok()?;
+            let offset = member.offset as usize;
+            Some((ty.inner.clone(), offset))
+        });
+
+        super::GlobalData::validate(layout)?;
+
+        let buffer = create_buffer(
+            device,
+            std::mem::size_of::<crate::uniforms::GlobalData>() as u64,
+            wgpu::BufferUsages::UNIFORM,
+        );
+
+        Ok(Self::UtilityUniformBlock {
+            binding,
+            backing: Default::default(),
+            buffer,
+        })
+    }
+}
+
+fn make_image(
+    binding: u32,
+    uniform: &naga::GlobalVariable,
+    entry: &wgpu::BindGroupLayoutEntry,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    document: &crate::parsing::Document,
+) -> Result<BindingEntry, Error> {
+    if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
+        let pixel_size = format.block_copy_size(None).unwrap();
+
+        let place_holder_tex = device.create_texture_with_data(
+            queue,
+            &crate::uniforms::storage_desc(1, 1, format),
+            Default::default(),
+            &vec![0; pixel_size as usize],
+        );
+
+        let mut view_desc = DEFAULT_VIEW;
+        view_desc.format = Some(format);
+
+        let placeholder_view = place_holder_tex.create_view(&view_desc);
+
+        let maybe_target = document
+            .targets
+            .iter()
+            .find(|t| Some(&t.name) == uniform.name.as_ref());
+
+        let maybe_relay = document
+            .relays
+            .iter()
+            .find(|r| Some(&r.name) == uniform.name.as_ref());
+
+        let state = match (maybe_target, maybe_relay) {
+            (Some(targ), None) => Purpose::Target {
+                user_provided_view: None,
+                previous_view: None,
+                persistent: targ.persistent,
+                width: targ.width,
+                height: targ.height,
+            },
+            (None, Some(relay)) => Purpose::Relay {
+                persistent: relay.persistent,
+                target: relay.target.clone(),
+                width: relay.width,
+                height: relay.height,
+            },
+            (None, None) => {
+                return Err(Error::TargetValidation(format!(
+                    "Storage texture not found {}",
+                    uniform.name.clone().unwrap_or_default()
+                )))
+            }
+            (Some(_), Some(_)) => {
+                return Err(Error::TargetValidation(format!(
+                    "Storage texture referenced in both a target and a relay {}",
+                    uniform.name.clone().unwrap_or_default()
+                )))
+            }
+        };
+
+        Ok(BindingEntry::StorageTexture {
+            binding,
+            purpose: state,
+            tex: place_holder_tex,
+            view: placeholder_view,
+            name: uniform.name.clone().unwrap_or_default(),
+        })
+    } else {
+        let input = match document.inputs.get(uniform.name.as_ref().unwrap()) {
+            Some(v) if v.is_stored_as_texture() => v.clone(),
+            Some(v) => Err(Error::InputTypeErr(format!("{v}"), "image".to_owned()))?,
+            None => InputType::Image(crate::input_type::TextureStatus::Uninit),
+        };
+
+        Ok(BindingEntry::Texture {
+            binding,
+            tex: None,
+            temp_view: None,
+            user_provided_override: None,
+            name: uniform.name.clone().unwrap_or_default(),
+            input: input.clone(),
+        })
+    }
+}
+
+fn make_sampler(
+    binding: u32,
+    uniform: &naga::GlobalVariable,
+    device: &wgpu::Device,
+    document: &crate::parsing::Document,
+    format: &wgpu::TextureFormat,
+    binding_entries: &mut Vec<BindingEntry>,
+    layout_entries: &mut Vec<wgpu::BindGroupLayoutEntry>,
+) {
+    let mut samp_desc = DEFAULT_SAMPLER;
+
+    if let Some(name) = uniform.name.as_ref() {
+        if let Some(config) = document.samplers.iter().find(|e| &e.name == name) {
+            samp_desc.mag_filter = config.filter_mode;
+            samp_desc.min_filter = config.filter_mode;
+            samp_desc.mipmap_filter = config.filter_mode;
+
+            samp_desc.address_mode_u = config.clamp_mode;
+            samp_desc.address_mode_v = config.clamp_mode;
+            samp_desc.address_mode_w = config.clamp_mode;
+        }
+    };
+
+    if matches!(format, wgpu::TextureFormat::Rgba32Float) {
+        samp_desc.mag_filter = wgpu::FilterMode::Nearest;
+        samp_desc.min_filter = wgpu::FilterMode::Nearest;
+        samp_desc.mipmap_filter = wgpu::FilterMode::Nearest;
+    };
+
+    let samp = device.create_sampler(&samp_desc);
+
+    binding_entries.push(BindingEntry::Sampler {
+        binding,
+        samp,
+        name: uniform.name.clone().unwrap_or_default(),
+    });
+
+    let sampler_type = if matches!(format, wgpu::TextureFormat::Rgba32Float) {
+        wgpu::SamplerBindingType::NonFiltering
+    } else {
+        wgpu::SamplerBindingType::Filtering
+    };
+
+    let entry = wgpu::BindGroupLayoutEntry {
+        ty: wgpu::BindingType::Sampler(sampler_type),
+        visibility: if document.stage == naga::ShaderStage::Compute {
+            ShaderStages::COMPUTE
+        } else {
+            ShaderStages::FRAGMENT
+        },
+        binding,
+        count: None,
+    };
+
+    layout_entries.push(entry);
+}
+
+fn create_buffer(device: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: usage | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn is_utility_block(document: &crate::parsing::Document, name: &str) -> bool {
+    document
+        .utility_block_name
+        .as_ref()
+        .is_some_and(|util_name| *util_name == name)
+}
+
+fn get_members<'a>(
+    module: &'a naga::Module,
+    ty: &'a naga::Type,
+    name: String,
+) -> Result<Vec<(Option<String>, &'a naga::Type)>, Error> {
+    match &ty.inner {
+        TypeInner::Struct { members, .. } => members
+            .iter()
+            .cloned()
+            .map(|m| {
+                let ty = module.types.get_handle(m.ty).map_err(|_| Error::Handle)?;
+                Ok((m.name, ty))
+            })
+            .collect(),
+        _ => Ok(vec![(Some(name), ty)]),
+    }
+}
+
+fn create_inputs(
+    document: &crate::parsing::Document,
+    module: &naga::Module,
+    members: &[(Option<String>, &naga::Type)],
+) -> Result<naga::FastIndexMap<String, InputType>, Error> {
+    let mut inputs = naga::FastIndexMap::default();
+
+    for (member_name, member_type) in members {
+        let name = member_name.clone().unwrap_or_default();
+
+        if let Some(var) = document.inputs.get(&name) {
+            var.validate(&member_type.inner)?;
+            inputs.insert(name, var.clone());
+        } else {
+            let input = InputType::RawBytes(crate::input_type::RawBytes {
+                inner: vec![0; member_type.inner.size(module.to_ctx()) as usize],
+            });
+            inputs.insert(name, input);
+        }
+    }
+
+    Ok(inputs)
+}
+
+fn calculate_alignment(ty: &TypeInner, module: &naga::Module) -> usize {
+    let align = alignment(ty, module);
+    (align + 15) / 16 * 16
+}
+
+fn alignment(ty: &naga::TypeInner, module: &naga::Module) -> usize {
+    match ty {
+        naga::TypeInner::Struct { members, .. } => {
+            let align = members
+                .iter()
+                .map(|i| {
+                    module
+                        .types
+                        .get_handle(i.ty)
+                        .unwrap()
+                        .inner
+                        .size(module.to_ctx())
+                })
+                .max()
+                .unwrap_or(0);
+
+            align as usize
+        }
+        naga::TypeInner::Array { stride, .. } => *stride as usize,
+        t => t.size(module.to_ctx()) as usize,
     }
 }
 

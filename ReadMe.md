@@ -51,15 +51,19 @@ void main()
  let format = TextureFormat::Rgba8UnormSrgb;
  let device = // your wgpu::Device here;
  let queue = // your wgpu::Queue here;
+ let surface = // your surface texture here;
 
  let render_context = RenderContext::new(src, format, &device, &queue).unwrap();
 
  let input = render_context.get_input_as<f32>("foo")?;
  input = 0.5;
 
- // congratulations! you now have a 255x255 pink square.
- let output = render_context.render_to_vec(&queue, &device, 255, 255);
+ let encoder = device.create_command_encoder(&Default::default());
 
+ render_context.render(&queue, &device, &encoder, &surface, 255, 255);
+
+ queue.submit(Some(encoder.finish()));
+ // congratulations! you now have a 255x255 pink square.
 ```
 
 See the documentation on creates.io or in the tweak_shader subdirectory for more info.

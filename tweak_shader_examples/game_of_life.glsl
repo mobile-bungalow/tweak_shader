@@ -52,6 +52,7 @@ void main() {
     ivec2 input_image_size = textureSize(input_image, 0);
     bool use_input_image = input_image_size.x >= 10 && input_image_size.y >= 10;
 
+    vec4 cell = vec4(0.0);
     if (frame_index % 1000 == 0) {
         float initial_state;
         if (use_input_image) {
@@ -62,9 +63,9 @@ void main() {
         } else {
             initial_state = step(0.2, random(normalized_coords));
         }
-        vec4 cell = vec4(vec3(initial_state), 1.0);
-        imageStore(output_image, pixel_coords, cell);
+        cell = vec4(vec3(initial_state), 1.0);
     } else {
+      barrier();
         vec4 current_cell = imageLoad(output_image, pixel_coords);
         int neighbor_count = getNeighborCount(pixel_coords, image_size);
         float new_state = current_cell.r;
@@ -79,7 +80,8 @@ void main() {
             }
         }
 
-        vec4 new_cell = vec4(vec3(new_state), 1.0);
-        imageStore(output_image, pixel_coords, new_cell);
+      cell = vec4(vec3(new_state), 1.0);
     }
+    barrier();
+    imageStore(output_image, pixel_coords, cell);
 }
