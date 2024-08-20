@@ -73,7 +73,7 @@ void main()
  - Image Input:
 
  ```glsl
- #pragma input(image, name="input_image", path="./demo.png")
+ #pragma input(image, name="input_image")
 layout(set=1, binding=1) uniform sampler default_sampler;
 layout(set=1, binding=2) uniform texture2D input_image;
  ```

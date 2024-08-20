@@ -257,10 +257,8 @@ impl RenderContext {
         Ok(())
     }
 
-    /// Renders into the view provided by `target`, if target
-    /// is `None` the context will allocate a texture of the proper dimensions
-    /// and render into that instead. This will leave update all buffers and
-    /// storage or render pass textures.
+    /// Renders into the view provided by `target`. if `target` the context will allocate and
+    /// render into a dummy texture if it is required by your pipeline.
     pub fn render<T: Into<Option<wgpu::TextureView>>>(
         &mut self,
         queue: &wgpu::Queue,

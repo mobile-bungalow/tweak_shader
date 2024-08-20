@@ -7,7 +7,9 @@ pub(crate) mod uniforms;
 /// This module provides typesafe wrapper for internal uniform buffer data.
 pub mod input_type;
 
+/// reexport of the compatible version of wgpu
 pub use wgpu;
+
 // the main rendering context.
 pub use context::{RenderContext, TextureDesc};
 
