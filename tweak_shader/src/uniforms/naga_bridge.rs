@@ -186,6 +186,7 @@ impl super::BindingEntry {
             .types
             .get_handle(element_type)
             .map_err(|_| Error::Handle)?;
+
         let padded_size = ty.inner.size(module.to_ctx()) as usize;
 
         let buffer = create_buffer(device, padded_size as u64, wgpu::BufferUsages::UNIFORM);
@@ -237,10 +238,14 @@ impl super::BindingEntry {
             },
         );
 
-        if is_dynamic_size && document_buffer.and_then(|b| b.length).is_some() {
-            // VALIDATION ERROR
-            return Err(Error::LengthForNondynamicBuffer(desc.name));
-        }
+        let len = document_buffer.and_then(|b| b.length);
+        let padded_size = match (len, is_dynamic_size) {
+            (Some(_), false) => {
+                return Err(Error::LengthForNondynamicBuffer(desc.name));
+            }
+            (Some(t), true) => padded_size * t,
+            _ => padded_size,
+        };
 
         let buffer = create_buffer(device, padded_size as u64, wgpu::BufferUsages::STORAGE);
 
