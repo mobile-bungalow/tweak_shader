@@ -210,7 +210,7 @@ impl super::BindingEntry {
 
         let buffer = create_buffer(device, padded_size as u64, wgpu::BufferUsages::UNIFORM);
 
-        let type_name_str = &type_name.as_ref().map(|s| s.as_str()).unwrap_or_default();
+        let type_name_str = &type_name.as_deref().unwrap_or_default();
         if is_utility_block(document, type_name_str) {
             return Self::create_utility_block(device, module, ty, binding);
         }
