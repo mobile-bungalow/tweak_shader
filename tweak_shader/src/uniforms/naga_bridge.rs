@@ -220,14 +220,12 @@ impl super::BindingEntry {
         let align = calculate_alignment(&ty.inner, module);
 
         Ok(Self::Buffer {
-            type_name,
             id,
             backing: vec![0u8; padded_size],
             align,
             binding,
             inputs,
             buffer,
-            storage: desc.storage,
         })
     }
 
@@ -282,13 +280,11 @@ impl super::BindingEntry {
 
         Ok(Self::Buffer {
             id,
-            type_name,
             align,
             backing: vec![0u8; padded_size as usize],
             binding,
             inputs: Default::default(),
             buffer,
-            storage: desc.storage,
         })
     }
 

@@ -1118,10 +1118,7 @@ pub enum BindingEntry {
         buffer: wgpu::Buffer,
         // the largest struct size in the inputs
         align: usize,
-        // storage location
-        storage: TSAddressSpace,
-        // the name of the variable, if any.
-        type_name: Option<String>,
+        // The variable identifier if any
         id: Option<String>,
     },
     StorageTexture {
