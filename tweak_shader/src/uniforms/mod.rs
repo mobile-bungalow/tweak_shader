@@ -1,3 +1,4 @@
+mod error;
 mod naga_bridge;
 mod validation;
 
@@ -5,7 +6,8 @@ use crate::context;
 use crate::input_type::*;
 use crate::parsing::Document;
 
-use naga::{AddressSpace, ResourceBinding};
+pub use error::Error;
+use naga::{AddressSpace as NagaAddressSpace, ResourceBinding};
 use naga::{FastHashMap, FastIndexMap};
 pub use naga_bridge::*;
 use wgpu::naga;
@@ -14,7 +16,6 @@ use bytemuck::*;
 use wgpu::{util::DeviceExt, BufferUsages};
 
 use crate::VarName;
-use thiserror::Error;
 use wgpu::BindGroupLayout;
 
 macro_rules! extract {
@@ -33,20 +34,6 @@ pub struct TargetDescriptor<'a> {
     pub name: &'a str,
     pub format: wgpu::TextureFormat,
 }
-
-const GLOBAL_EXAMPLES: &str = r#"
-#pragma utility_block(ShaderInputs)
-layout(set = 0, binding = 0) uniform ShaderInputs {
-    float time;       // shader playback time (in seconds)
-    float time_delta; // elapsed time since last frame in secs
-    float frame_rate; // number of frames per second estimates
-    int frame_index;  // frame count
-    vec4 mouse;       // xy is last mouse down position,  abs(zw) is current mouse, sign(z) > 0.0 is mouse_down, sign(w) > 0.0 is click_down event
-    vec4 date;        // [year, month, day, seconds]
-    vec3 resolution;  // viewport resolution in pixels, [w, h, w/h]
-    int pass_index;   // updated to reflect render pass
-};
-"#;
 
 const DEFAULT_SAMPLER: wgpu::SamplerDescriptor = wgpu::SamplerDescriptor {
     label: Some("Default Sampler"),
@@ -73,72 +60,6 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
     base_array_layer: 0,
     array_layer_count: Some(1),
 };
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("Pa1s {0} was not compute compatible, compute passes can only specify an index, targets are managed through relays.")]
-    ComputePass(usize),
-
-    #[error("Length specified for buffer of static length: {0}")]
-    LengthForNondynamicBuffer(String),
-
-    #[error("Buffer(s) specified with no buffer present in pipeline: {0:?}")]
-    MissingBuffer(Vec<String>),
-
-    #[error("Tried to set output to nonexistant Target {0}.")]
-    NonexistantTarget(String),
-
-    #[error("Tried to set output to target without the `screen` specifier {0}.")]
-    NotScreenTarget(String),
-
-    #[error("Tried to set output target to a uniform that is not an output compatible storage texture {0}.")]
-    NotStorageTexture(String),
-
-    #[error("A Naga Arena was missing a handle it said it had, this might be a Naga bug.")]
-    Handle,
-
-    #[error("Only 2D Textures are supported at this time.")]
-    TextureDimension,
-
-    #[error("Inputs specified but no matching uniform found: {0:?}")]
-    MissingInput(Vec<String>),
-
-    #[error("Targets found with the `screen` attribute that do not have a copy compatible format with the output texture: {0:?}, must be: {1:?}")]
-    TargetFormatMismatch(Vec<(wgpu::TextureFormat, String)>, wgpu::TextureFormat),
-
-    #[error("Validation error: {0}")]
-    TargetValidation(String),
-
-    #[error("Unsupported uniform type: {0:?}")]
-    UnsupportedUniformType(String),
-
-    #[error("Unsupported image dimension: {0:?}")]
-    UnsupportedImageDim(String),
-
-    #[error("Error loading {0}, uniforms with array dimensions are unsupported at this time.")]
-    UnsupportedArrayType(String),
-
-    #[error("Mismatched types found: {0}, expected {1}")]
-    InputTypeErr(String, String),
-
-    #[error("Type check failed for input variable: '{0}'")]
-    TypeCheck(String),
-
-    #[error("Target specified but no matching uniform found: {0:?}")]
-    MissingTarget(Vec<String>),
-
-    #[error("The utility block specified in the pragma does not match the expected layout. \n it should match this layout - \n {}", GLOBAL_EXAMPLES)]
-    UtilityBlockType,
-
-    #[error("The utility block specified `{0}` does not exist")]
-    UtilityBlockMissing(String),
-
-    #[error("Multiple uniforms declared as `push_constant`, there can only be one.")]
-    MultiplePushConstants,
-
-    #[error("Push constant was defined outside of a struct block.")]
-    PushConstantOutSideOfBlock,
-}
 
 #[derive(Debug, Copy, Clone)]
 struct VariableAddress {
@@ -285,7 +206,7 @@ impl Uniforms {
             .flat_map(|s| s.binding_entries.iter())
             .find_map(|t| {
                 if let BindingEntry::StorageTexture {
-                    purpose: Purpose::Target { .. },
+                    purpose: StorageTexturePurpose::Target { .. },
                     name,
                     ..
                 } = t
@@ -328,7 +249,7 @@ impl Uniforms {
         if let Some(BindingEntry::StorageTexture { purpose: state, .. }) =
             set.binding_entries.get(addr.binding)
         {
-            if matches!(state, Purpose::Target { .. }) {
+            if matches!(state, StorageTexturePurpose::Target { .. }) {
                 self.default_compute_texture = Some(name.to_owned());
                 Ok(())
             } else {
@@ -475,7 +396,7 @@ impl Uniforms {
                 tex,
                 view,
                 purpose:
-                    Purpose::Relay {
+                    StorageTexturePurpose::Relay {
                         target: tname,
                         width,
                         height,
@@ -505,7 +426,7 @@ impl Uniforms {
                 tex,
                 view,
                 purpose:
-                    Purpose::Target {
+                    StorageTexturePurpose::Target {
                         width,
                         height,
                         user_provided_view: None,
@@ -589,7 +510,7 @@ impl Uniforms {
         let user_view = groups.find_map(|group| {
             if let BindingEntry::StorageTexture {
                 purpose:
-                    Purpose::Target {
+                    StorageTexturePurpose::Target {
                         user_provided_view,
                         previous_view,
                         ..
@@ -618,7 +539,7 @@ impl Uniforms {
         let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
 
         let relay_textures = groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { tex, purpose: Purpose::Relay { target,.. }, .. } => (target, tex))
+            extract!(group, BindingEntry::StorageTexture { tex, purpose: StorageTexturePurpose::Relay { target,.. }, .. } => (target, tex))
         });
 
         for (target, tex) in relay_textures {
@@ -647,7 +568,7 @@ impl Uniforms {
         groups.for_each(|group| {
             if let BindingEntry::StorageTexture {
                 purpose:
-                    Purpose::Target {
+                    StorageTexturePurpose::Target {
                         user_provided_view,
                         previous_view,
                         ..
@@ -672,7 +593,7 @@ impl Uniforms {
             BindingEntry::StorageTexture {
                 view,
                 purpose:
-                    Purpose::Target {
+                    StorageTexturePurpose::Target {
                         persistent: false,
                         user_provided_view,
                         ..
@@ -682,7 +603,7 @@ impl Uniforms {
             BindingEntry::StorageTexture {
                 view,
                 purpose:
-                    Purpose::Relay {
+                    StorageTexturePurpose::Relay {
                         persistent: false, ..
                     },
                 ..
@@ -719,7 +640,7 @@ impl Uniforms {
             if let BindingEntry::StorageTexture {
                 name,
                 tex,
-                purpose: Purpose::Target { persistent, .. },
+                purpose: StorageTexturePurpose::Target { persistent, .. },
                 ..
             } = group
             {
@@ -735,8 +656,67 @@ impl Uniforms {
         })
     }
 
+    pub fn get_buffer(&mut self, var_name: &str) -> Option<&wgpu::Buffer> {
+        self.sets
+            .iter()
+            .flat_map(|b| b.binding_entries.iter())
+            .find_map(|entries| match entries {
+                BindingEntry::Buffer {
+                    buffer,
+                    id: Some(n),
+                    ..
+                } if n.as_str() == var_name => Some(buffer),
+                _ => None,
+            })
+    }
+
+    pub fn resize_dynamic_array(
+        &mut self,
+        var_name: &str,
+        num_elements: usize,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<(), Error> {
+        let mut_buffer = self
+            .sets
+            .iter_mut()
+            .flat_map(|b| b.binding_entries.iter_mut())
+            .find_map(|entries| match entries {
+                BindingEntry::Buffer {
+                    buffer,
+                    align,
+                    id: Some(n),
+                    ..
+                } if n.as_str() == var_name => Some((align, buffer)),
+                _ => None,
+            });
+
+        if let Some((stride, buffer)) = mut_buffer {
+            let new_size = num_elements * *stride;
+
+            let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(var_name),
+                size: new_size as wgpu::BufferAddress,
+                usage: buffer.usage(),
+                mapped_at_creation: false,
+            });
+
+            let copy_size = buffer.size().min(new_size as wgpu::BufferAddress);
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Buffer resize encoder"),
+            });
+            encoder.copy_buffer_to_buffer(buffer, 0, &new_buffer, 0, copy_size);
+            queue.submit(std::iter::once(encoder.finish()));
+
+            *buffer = new_buffer;
+            Ok(())
+        } else {
+            Err(Error::NoBuffer(var_name.to_string()))
+        }
+    }
+
     pub fn unload_texture(&mut self, var: &str) -> bool {
-        if self.private_textures.iter().any(|t| &t.name == var) {
+        if self.private_textures.iter().any(|t| t.name.as_str() == var) {
             return false;
         }
 
@@ -1069,27 +1049,6 @@ impl Uniforms {
     }
 }
 
-pub fn sets(
-    module: &naga::Module,
-    document: &crate::parsing::Document,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    format: &wgpu::TextureFormat,
-) -> Result<Vec<TweakBindGroup>, Error> {
-    let max_set_index = module
-        .global_variables
-        .iter()
-        .filter_map(|(_, var)| var.binding.as_ref().map(|b| b.group))
-        .max()
-        .unwrap_or(0);
-
-    // collect all set indices, find the max then create bind sets contiguous up to max.
-    // some might be empty.
-    (0..=max_set_index)
-        .map(|set| TweakBindGroup::new_from_naga(set, module, document, device, queue, format))
-        .collect::<Result<_, _>>()
-}
-
 // CPU representation of the shadertoy-like bind group
 // This is uploaded to the gpu using std430 memory layout
 // keep that in mind when editing this structure
@@ -1116,14 +1075,14 @@ impl Default for GlobalData {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Storage {
+pub enum TSAddressSpace {
     Uniform,
     Push,
     Storage(wgpu::StorageTextureAccess),
 }
 
 #[derive(Debug)]
-pub enum Purpose {
+pub enum StorageTexturePurpose {
     Relay {
         // the target texture to forward this into after each pass
         target: String,
@@ -1150,24 +1109,27 @@ pub enum BindingEntry {
         buffer: wgpu::Buffer,
     },
     Buffer {
-        backing: Vec<u8>,
         // the binding index , might not be contiguous
         binding: u32,
         // inputs with a non `raw_bytes` type if they are mapped in the document
         inputs: FastIndexMap<String, InputType>,
         // buffer this uniform is mapped to
+        backing: Vec<u8>,
         buffer: wgpu::Buffer,
         // the largest struct size in the inputs
         align: usize,
         // storage location
-        storage: Storage,
+        storage: TSAddressSpace,
+        // the name of the variable, if any.
+        type_name: Option<String>,
+        id: Option<String>,
     },
     StorageTexture {
         // the binding index , might not be contiguous
         binding: u32,
         tex: wgpu::Texture,
         view: wgpu::TextureView,
-        purpose: Purpose,
+        purpose: StorageTexturePurpose,
         // variable name
         name: String,
     },
@@ -1195,8 +1157,11 @@ pub enum BindingEntry {
 }
 
 struct PrimitiveDescriptor {
-    name: String,
-    storage: Storage,
+    // name of struct type
+    type_name: Option<String>,
+    // name of global identifier if not a destructures struct
+    id: Option<String>,
+    storage: TSAddressSpace,
     binding: u32,
     element_type: naga::Handle<naga::Type>,
 }
@@ -1220,7 +1185,7 @@ pub fn push_constant(
     let push_constants: Vec<_> = module
         .global_variables
         .iter()
-        .filter(|(_, var)| var.space == AddressSpace::PushConstant)
+        .filter(|(_, var)| var.space == NagaAddressSpace::PushConstant)
         .collect();
 
     let (_, push_constant) = match push_constants.as_slice() {
@@ -1288,6 +1253,11 @@ pub fn push_constant(
     }
 }
 
+pub enum TexOwnership<'a> {
+    View(&'a wgpu::TextureView),
+    Tex(&'a wgpu::Texture),
+}
+
 #[derive(Debug)]
 pub struct TweakBindGroup {
     // the Bind set
@@ -1298,11 +1268,6 @@ pub struct TweakBindGroup {
     // the bind group, frequently rebound
     pub bind_group: wgpu::BindGroup,
     pub layout: wgpu::BindGroupLayout,
-}
-
-pub enum TexOwnership<'a> {
-    View(&'a wgpu::TextureView),
-    Tex(&'a wgpu::Texture),
 }
 
 impl TweakBindGroup {
@@ -1343,7 +1308,7 @@ impl TweakBindGroup {
             }
             Some(BindingEntry::StorageTexture {
                 purpose:
-                    Purpose::Target {
+                    StorageTexturePurpose::Target {
                         user_provided_view, ..
                     },
                 ..
@@ -1381,7 +1346,7 @@ impl TweakBindGroup {
             }
             Some(BindingEntry::StorageTexture {
                 purpose:
-                    Purpose::Target {
+                    StorageTexturePurpose::Target {
                         user_provided_view, ..
                     },
                 ..
@@ -1585,11 +1550,11 @@ impl TweakBindGroup {
                         purpose: state,
                         ..
                     } => match state {
-                        Purpose::Relay { .. } => wgpu::BindGroupEntry {
+                        StorageTexturePurpose::Relay { .. } => wgpu::BindGroupEntry {
                             binding: *binding,
                             resource: wgpu::BindingResource::TextureView(&*view),
                         },
-                        Purpose::Target {
+                        StorageTexturePurpose::Target {
                             user_provided_view, ..
                         } => wgpu::BindGroupEntry {
                             binding: *binding,

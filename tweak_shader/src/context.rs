@@ -105,7 +105,7 @@ impl RenderContext {
             )))
             .collect::<Vec<_>>();
 
-        let sets = uniforms::sets(&naga_mod, &document, device, queue, &format)?;
+        let sets = uniforms::create_bind_groups(&naga_mod, &document, device, queue, &format)?;
 
         // theres is only every 1 or 0 push constant blocks
         let push_const = uniforms::push_constant(&naga_mod, &document)?;
@@ -598,10 +598,23 @@ impl RenderContext {
         }
     }
 
-    /// Retrieve a context managed wgpu buffer backing an `input` or a `buffer.`
+    /// Retrieve the buffer backing the buffer with the exact variable id `buffer_name`.
     pub fn get_buffer(&mut self, buffer_name: &str) -> Option<&wgpu::Buffer> {
-        //self.uniforms.get_buffer(buffer_name)
-        None
+        self.uniforms.get_buffer(buffer_name)
+    }
+
+    /// Updates the number of elements stored in the buffer with the id `buffer_name`
+    /// dynamic array buffer, copying or dropping old elements if necessary.
+    pub fn resize_dynamic_buffer(
+        &mut self,
+        buffer_name: &str,
+        num_elems: usize,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<(), Error> {
+        Ok(self
+            .uniforms
+            .resize_dynamic_array(buffer_name, num_elems, device, queue)?)
     }
 
     /// returns an instance of the render context in a default error state

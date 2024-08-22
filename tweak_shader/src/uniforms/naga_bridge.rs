@@ -1,6 +1,6 @@
 use super::{
-    BindingEntry, Error, PrimitiveDescriptor, Purpose, ResourceBinding, Storage, TweakBindGroup,
-    DEFAULT_SAMPLER, DEFAULT_VIEW,
+    BindingEntry, Error, PrimitiveDescriptor, ResourceBinding, StorageTexturePurpose,
+    TSAddressSpace, TweakBindGroup, DEFAULT_SAMPLER, DEFAULT_VIEW,
 };
 
 use crate::input_type::InputType;
@@ -12,6 +12,27 @@ use wgpu::{
 };
 
 use core::num::NonZeroU32;
+
+pub fn create_bind_groups(
+    module: &naga::Module,
+    document: &crate::parsing::Document,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: &wgpu::TextureFormat,
+) -> Result<Vec<TweakBindGroup>, Error> {
+    let max_set_index = module
+        .global_variables
+        .iter()
+        .filter_map(|(_, var)| var.binding.as_ref().map(|b| b.group))
+        .max()
+        .unwrap_or(0);
+
+    // collect all set indices, find the max then create bind sets contiguous up to max.
+    // some might be empty.
+    (0..=max_set_index)
+        .map(|set| TweakBindGroup::new_from_naga(set, module, document, device, queue, format))
+        .collect::<Result<_, _>>()
+}
 
 impl TweakBindGroup {
     pub fn new_from_naga(
@@ -40,9 +61,11 @@ impl TweakBindGroup {
                 .map_err(|_| Error::Handle)?;
 
             let storage = match uniform.space {
-                naga::AddressSpace::Uniform | naga::AddressSpace::Handle => Storage::Uniform,
-                naga::AddressSpace::PushConstant => Storage::Push,
-                naga::AddressSpace::Storage { access } => Storage::Storage(storage_access(&access)),
+                naga::AddressSpace::Uniform | naga::AddressSpace::Handle => TSAddressSpace::Uniform,
+                naga::AddressSpace::PushConstant => TSAddressSpace::Push,
+                naga::AddressSpace::Storage { access } => {
+                    TSAddressSpace::Storage(storage_access(&access))
+                }
                 _ => continue,
             };
 
@@ -71,18 +94,13 @@ impl TweakBindGroup {
                 | naga::TypeInner::Vector { .. }
                 | naga::TypeInner::Struct { .. }
                 | naga::TypeInner::Matrix { .. } => {
-                    let unique_name = uniform
-                        .name
-                        .clone()
-                        .or(ty.name.clone())
-                        .expect("anonymous global");
-
                     let entry = BindingEntry::new_primitive_entry(
                         device,
                         module,
                         document,
                         PrimitiveDescriptor {
-                            name: unique_name,
+                            type_name: ty.name.clone(),
+                            id: uniform.name.clone(),
                             storage,
                             binding,
                             element_type: uniform.ty,
@@ -92,12 +110,12 @@ impl TweakBindGroup {
                     binding_entries.push(entry);
 
                     let buf_ty = match storage {
-                        super::Storage::Uniform => wgpu::BindingType::Buffer {
+                        super::TSAddressSpace::Uniform => wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
-                        super::Storage::Storage(access) => wgpu::BindingType::Buffer {
+                        super::TSAddressSpace::Storage(access) => wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage {
                                 read_only: access == wgpu::StorageTextureAccess::ReadOnly,
                             },
@@ -162,10 +180,10 @@ impl super::BindingEntry {
         desc: PrimitiveDescriptor,
     ) -> Result<Self, Error> {
         match desc.storage {
-            Storage::Uniform | Storage::Push => {
+            TSAddressSpace::Uniform | TSAddressSpace::Push => {
                 Self::new_uniform_or_push_entry(device, module, document, desc)
             }
-            Storage::Storage(_) => Self::new_storage_entry(device, module, desc, document),
+            TSAddressSpace::Storage(_) => Self::new_storage_entry(device, module, desc, document),
         }
     }
 
@@ -176,7 +194,8 @@ impl super::BindingEntry {
         desc: PrimitiveDescriptor,
     ) -> Result<Self, Error> {
         let PrimitiveDescriptor {
-            name,
+            type_name,
+            id,
             binding,
             element_type,
             ..
@@ -191,17 +210,20 @@ impl super::BindingEntry {
 
         let buffer = create_buffer(device, padded_size as u64, wgpu::BufferUsages::UNIFORM);
 
-        if is_utility_block(document, &name) {
+        let type_name_str = &type_name.as_ref().map(|s| s.as_str()).unwrap_or_default();
+        if is_utility_block(document, type_name_str) {
             return Self::create_utility_block(device, module, ty, binding);
         }
 
-        let members = get_members(module, ty, name)?;
+        let members = get_members(module, ty, type_name_str)?;
         let inputs = create_inputs(document, module, &members)?;
         let align = calculate_alignment(&ty.inner, module);
 
         Ok(Self::Buffer {
-            align,
+            type_name,
+            id,
             backing: vec![0u8; padded_size],
+            align,
             binding,
             inputs,
             buffer,
@@ -218,6 +240,8 @@ impl super::BindingEntry {
         let PrimitiveDescriptor {
             binding,
             element_type,
+            type_name,
+            id,
             ..
         } = desc;
 
@@ -228,7 +252,10 @@ impl super::BindingEntry {
 
         let padded_size = ty.inner.size(module.to_ctx());
 
-        let document_buffer = document.buffers.iter().find(|b| b.name == desc.name);
+        let document_buffer = document
+            .buffers
+            .iter()
+            .find(|b| Some(&b.name) == id.as_ref() || Some(&b.name) == type_name.as_ref());
 
         let is_dynamic_size = matches!(
             ty.inner,
@@ -241,7 +268,9 @@ impl super::BindingEntry {
         let len = document_buffer.and_then(|b| b.length);
         let padded_size = match (len, is_dynamic_size) {
             (Some(_), false) => {
-                return Err(Error::LengthForNondynamicBuffer(desc.name));
+                return Err(Error::LengthForNondynamicBuffer(
+                    id.or(type_name).unwrap_or_default(),
+                ));
             }
             (Some(t), true) => padded_size * t,
             _ => padded_size,
@@ -252,6 +281,8 @@ impl super::BindingEntry {
         let align = calculate_alignment(&ty.inner, module);
 
         Ok(Self::Buffer {
+            id,
+            type_name,
             align,
             backing: vec![0u8; padded_size as usize],
             binding,
@@ -327,14 +358,14 @@ fn make_image(
             .find(|r| Some(&r.name) == uniform.name.as_ref());
 
         let state = match (maybe_target, maybe_relay) {
-            (Some(targ), None) => Purpose::Target {
+            (Some(targ), None) => StorageTexturePurpose::Target {
                 user_provided_view: None,
                 previous_view: None,
                 persistent: targ.persistent,
                 width: targ.width,
                 height: targ.height,
             },
-            (None, Some(relay)) => Purpose::Relay {
+            (None, Some(relay)) => StorageTexturePurpose::Relay {
                 persistent: relay.persistent,
                 target: relay.target.clone(),
                 width: relay.width,
@@ -455,7 +486,7 @@ fn is_utility_block(document: &crate::parsing::Document, name: &str) -> bool {
 fn get_members<'a>(
     module: &'a naga::Module,
     ty: &'a naga::Type,
-    name: String,
+    type_name: &str,
 ) -> Result<Vec<(Option<String>, &'a naga::Type)>, Error> {
     match &ty.inner {
         TypeInner::Struct { members, .. } => members
@@ -466,7 +497,7 @@ fn get_members<'a>(
                 Ok((m.name, ty))
             })
             .collect(),
-        _ => Ok(vec![(Some(name), ty)]),
+        _ => Ok(vec![(Some(type_name.to_owned()), ty)]),
     }
 }
 

@@ -95,7 +95,7 @@ impl Uniforms {
                 if let BindingEntry::StorageTexture {
                     tex,
                     name,
-                    purpose: super::Purpose::Target { .. },
+                    purpose: super::StorageTexturePurpose::Target { .. },
                     ..
                 } = b
                 {
