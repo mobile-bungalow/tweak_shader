@@ -64,24 +64,27 @@ void main() {
             initial_state = step(0.2, random(normalized_coords));
         }
         cell = vec4(vec3(initial_state), 1.0);
-    } else {
-      barrier();
-        vec4 current_cell = imageLoad(output_image, pixel_coords);
-        int neighbor_count = getNeighborCount(pixel_coords, image_size);
-        float new_state = current_cell.r;
 
-        if (current_cell.r > 0.5) {
-            if (neighbor_count < 2 || neighbor_count > 3) {
-                new_state = 0.0;
-            }
-        } else {
-            if (neighbor_count == 3) {
-                new_state = 1.0; 
-            }
+        imageStore(output_image, pixel_coords, cell);
+        return;
+    } 
+
+    vec4 current_cell = imageLoad(output_image, pixel_coords);
+    int neighbor_count = getNeighborCount(pixel_coords, image_size);
+    float new_state = current_cell.r;
+
+    if (current_cell.r > 0.5) {
+        if (neighbor_count < 2 || neighbor_count > 3) {
+            new_state = 0.0;
         }
-
-      cell = vec4(vec3(new_state), 1.0);
+    } else {
+        if (neighbor_count == 3) {
+            new_state = 1.0; 
+        }
     }
+
+    cell = vec4(vec3(new_state), 1.0);
+
     barrier();
     imageStore(output_image, pixel_coords, cell);
 }
