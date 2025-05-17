@@ -219,7 +219,7 @@ pub fn toasts(ui_state: &mut UiState, ctx: &egui_winit::egui::Context) {
         ui_state
             .toasts
             .error(notification)
-            .set_duration(Some(std::time::Duration::from_secs(10)));
+            .duration(Some(std::time::Duration::from_secs(10)));
     }
     ui_state.toasts.show(ctx);
 }

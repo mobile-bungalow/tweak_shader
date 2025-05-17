@@ -1,4 +1,5 @@
 use tweak_shader::{input_type::InputType, RenderContext};
+use wgpu::MemoryHints;
 
 const TEST_NO_INPUTS: &str = r"
 #version 450
@@ -25,14 +26,14 @@ const UTIL_BLOCK: &str = r"
 
 #pragma utility_block(ShaderInputs)
 layout(set = 0, binding = 0) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
-    float frame_rate; 
-    uint frame_index;  
-    vec4 mouse;       
-    vec4 date;       
-    vec3 resolution;  
-    uint pass_index;   
+    float time;
+    float time_delta;
+    float frame_rate;
+    uint frame_index;
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 void main() {
@@ -58,7 +59,7 @@ const MALFORMED_UTIL_BLOCK: &str = r"
 #version 450
 #pragma utility_block(ShaderInputs)
 layout(set = 0, binding = 0) uniform ShaderInputs {
-    vec4 wrong; 
+    vec4 wrong;
 };
 
 void main() {
@@ -112,15 +113,15 @@ layout(set = 0, binding = 0) uniform ShaderInputs {
     float foo;
     vec2 bar;
     vec4 baz;
-    int qux;       
-    int qux_1;       
+    int qux;
+    int qux_1;
 };
 
 void main() {
     // NOTE: this test FAILS without this line!
     // i'm 99% sure this is a bug in naga that accidentally
     // omits unused uniforms from reflection! bad!
-   float ugh = foo; 
+   float ugh = foo;
 }
 ";
 
@@ -142,11 +143,11 @@ const MISSING_INPUTS: &str = r"
 #version 450
 #pragma input(float, name=foo)
 layout(set = 0, binding = 0) uniform ShaderInputs {
-    int qux_1;       
+    int qux_1;
 };
 
 void main() {
-   int test = qux_1; 
+   int test = qux_1;
 }
 ";
 
@@ -170,7 +171,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             ..Default::default()
         };
 
-        wgpu::Instance::new(desc)
+        wgpu::Instance::new(&desc)
     } else {
         wgpu::Instance::default()
     };
@@ -194,6 +195,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                         .using_resolution(adapter.limits()),
+                    memory_hints: MemoryHints::Performance,
                 },
                 None,
             )

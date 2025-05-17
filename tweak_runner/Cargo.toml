@@ -10,21 +10,20 @@ default = []
 video = ["ffmpeg-next"]
 
 [dependencies.ffmpeg-next]
-version = "6.0.0" 
+version = "6.0.0"
 optional = true
 
 [dependencies]
-tweak_shader = { path = "../tweak_shader/" } 
-egui-wgpu = { version = "0.28.1", features = ["winit"] }
-egui-notify = { git = "https://github.com/ItsEthra/egui-notify", rev="b828cbc" }
-egui-winit = "0.28.1"
-egui_plot = "0.28.1"
+tweak_shader = { path = "../tweak_shader/" }
+egui-wgpu = { version = "0.31.1", features = ["winit"] }
+egui-notify = "0.19.0"
+egui-winit = "0.31.1"
+egui_plot = "0.31.0"
 pollster = "0.3.0"
 notify = "6.1.1"
 tinyfiledialogs = "3.9.1"
 image = "0.24.7"
 cpal = "0.15.2"
 ringbuf = "0.3.3"
-rustfft = "6.1.0" 
+rustfft = "6.1.0"
 chrono = "0.4.31"
-

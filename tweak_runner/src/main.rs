@@ -57,6 +57,9 @@ fn main() {
     let mut last_frame_time = std::time::Instant::now();
     let mut resized = false;
 
+    // winit changed their API
+    // It's not worth rewriting the whole tool in the new format
+    #[allow(deprecated)]
     event_loop
         .run(move |event, control_flow| {
             let _ = (&wgpu_adapter, &wgpu_surface_config, &app);

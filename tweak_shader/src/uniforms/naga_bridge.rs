@@ -1,6 +1,6 @@
 use super::{
-    BindingEntry, Error, ResourceBinding, Storage, StorageTextureState, StructDescriptor,
-    TweakBindGroup, DEFAULT_SAMPLER, DEFAULT_VIEW,
+    BindingEntry, Error, ResourceBinding, StorageTextureState, StructDescriptor, TweakBindGroup,
+    DEFAULT_SAMPLER, DEFAULT_VIEW,
 };
 use crate::input_type::InputType;
 use wgpu::{
@@ -38,15 +38,6 @@ impl TweakBindGroup {
                 .get_handle(uniform.ty)
                 .map_err(|_| Error::Handle)?;
 
-            let storage = match uniform.space {
-                naga::AddressSpace::Uniform | naga::AddressSpace::Handle => Storage::Uniform,
-                naga::AddressSpace::PushConstant => Storage::Push,
-                naga::AddressSpace::Storage { access } => {
-                    Storage::TextureAccess(storage_access(&access))
-                }
-                _ => continue,
-            };
-
             match &ty.inner {
                 naga::TypeInner::Array {
                     base: _,
@@ -64,7 +55,6 @@ impl TweakBindGroup {
                         StructDescriptor {
                             padded_size: *span as usize,
                             name: ty.name.clone().unwrap_or_default(),
-                            storage,
                             binding,
                             members: members.as_slice(),
                         },
@@ -155,7 +145,6 @@ impl TweakBindGroup {
                             tex: place_holder_tex,
                             view: placeholder_view,
                             name: uniform.name.clone().unwrap_or_default(),
-                            storage,
                         });
                     } else {
                         let input = match document.inputs.get(uniform.name.as_ref().unwrap()) {
@@ -172,7 +161,6 @@ impl TweakBindGroup {
                             view: None,
                             name: uniform.name.clone().unwrap_or_default(),
                             input: input.clone(),
-                            storage,
                         });
                     };
 
@@ -284,7 +272,6 @@ pub fn texture_fmt(fmt: &naga::StorageFormat) -> wgpu::TextureFormat {
         naga::StorageFormat::Rgba8Uint => wgpu::TextureFormat::Rgba8Uint,
         naga::StorageFormat::Rgba8Sint => wgpu::TextureFormat::Rgba8Sint,
         naga::StorageFormat::Rgb10a2Unorm => wgpu::TextureFormat::Rgb10a2Unorm,
-        naga::StorageFormat::Rg11b10Float => wgpu::TextureFormat::Rg11b10Float,
         naga::StorageFormat::Rg32Uint => wgpu::TextureFormat::Rg32Uint,
         naga::StorageFormat::Rg32Sint => wgpu::TextureFormat::Rg32Sint,
         naga::StorageFormat::Rg32Float => wgpu::TextureFormat::Rg32Float,
@@ -302,6 +289,8 @@ pub fn texture_fmt(fmt: &naga::StorageFormat) -> wgpu::TextureFormat {
         naga::StorageFormat::Rgba16Snorm => wgpu::TextureFormat::Rgba16Snorm,
         naga::StorageFormat::Bgra8Unorm => wgpu::TextureFormat::Bgra8Unorm,
         naga::StorageFormat::Rgb10a2Uint => wgpu::TextureFormat::Rgb10a2Uint,
+        naga::StorageFormat::Rg11b10Ufloat => wgpu::TextureFormat::Rg11b10Ufloat,
+        naga::StorageFormat::R64Uint => wgpu::TextureFormat::R64Uint,
     }
 }
 

@@ -413,29 +413,27 @@ impl App {
             &self.gui_context.egui_screen_desc,
         );
 
-        {
-            let view = &screen_tex.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut render_pass = wgpu_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Gui"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+        let view = &screen_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let render_pass = wgpu_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Gui"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
 
-            self.gui_context.egui_renderer.render(
-                &mut render_pass,
-                &prims,
-                &self.gui_context.egui_screen_desc,
-            );
-        }
+        self.gui_context.egui_renderer.render(
+            &mut render_pass.forget_lifetime(),
+            &prims,
+            &self.gui_context.egui_screen_desc,
+        );
 
         wgpu_queue.submit(Some(wgpu_encoder.finish()));
     }

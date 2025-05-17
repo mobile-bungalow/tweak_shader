@@ -72,6 +72,7 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
     mip_level_count: Some(1),
     base_array_layer: 0,
     array_layer_count: Some(1),
+    usage: None,
 };
 
 #[derive(Debug, Error)]
@@ -261,7 +262,7 @@ impl Uniforms {
 
         let first_target = sets.iter()
             .flat_map(|s| s.binding_entries.iter())
-            .find_map(|t| 
+            .find_map(|t|
                 extract!(t, BindingEntry::StorageTexture {  state: StorageTextureState::Target { .. }, name, .. } => name.clone())
             );
 
@@ -546,15 +547,12 @@ impl Uniforms {
     // replace the views in the storage textures with those
     // proved by the target set.
     pub fn map_target_view(&mut self, substitute_view: wgpu::TextureView) {
-        let mut groups = self
-            .sets
-            .iter_mut()
-            .flat_map(|e| {
-                //TODO: this is hacky! only rebind if needed
-                // and certainly not as a side effect of a map
-                e.needs_rebind = true;
-                e.binding_entries.iter_mut()
-            });
+        let mut groups = self.sets.iter_mut().flat_map(|e| {
+            //TODO: this is hacky! only rebind if needed
+            // and certainly not as a side effect of a map
+            e.needs_rebind = true;
+            e.binding_entries.iter_mut()
+        });
 
         let user_view = groups.find_map(|group| {
             if let BindingEntry::StorageTexture {
@@ -614,7 +612,8 @@ impl Uniforms {
             .iter_mut()
             .flat_map(|e| e.binding_entries.iter_mut());
 
-        groups.for_each(|group| if let BindingEntry::StorageTexture {
+        groups.for_each(|group| {
+            if let BindingEntry::StorageTexture {
                 state:
                     StorageTextureState::Target {
                         user_provided_view,
@@ -622,7 +621,11 @@ impl Uniforms {
                         ..
                     },
                 ..
-            } = group { *user_provided_view = previous_view.take() });
+            } = group
+            {
+                *user_provided_view = previous_view.take()
+            }
+        });
     }
 
     // zero the textures of any targets
@@ -681,7 +684,7 @@ impl Uniforms {
     pub fn iter_targets(&self) -> impl Iterator<Item = TargetDescriptor<'_>> {
         let groups = self.sets.iter().flat_map(|e| e.binding_entries.iter());
         groups.filter_map(|group| {
-            extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Target { persistent, .. }, .. } 
+            extract!(group, BindingEntry::StorageTexture { name, tex, state: StorageTextureState::Target { persistent, .. }, .. }
                     => TargetDescriptor { persistent: *persistent, name, format: tex.format() })
         })
     }
@@ -788,7 +791,7 @@ impl Uniforms {
         queue.write_texture(
             texture.as_image_copy(),
             data,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: stride.or(Some(width * block_size)),
                 rows_per_image: None,
@@ -1039,13 +1042,6 @@ impl Default for GlobalData {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Storage {
-    Uniform,
-    Push,
-    TextureAccess(wgpu::StorageTextureAccess),
-}
-
 #[derive(Debug)]
 pub enum StorageTextureState {
     Relay {
@@ -1072,8 +1068,6 @@ pub enum BindingEntry {
         backing: crate::uniforms::GlobalData,
         // buffer this uniform is mapped to
         buffer: wgpu::Buffer,
-        // storage location
-        storage: Storage,
     },
     UniformBlock {
         backing: Vec<u8>,
@@ -1085,8 +1079,6 @@ pub enum BindingEntry {
         buffer: wgpu::Buffer,
         // the largest struct size in the inputs
         align: usize,
-        // storage location
-        storage: Storage,
     },
     StorageTexture {
         // the binding index , might not be contiguous
@@ -1096,8 +1088,6 @@ pub enum BindingEntry {
         state: StorageTextureState,
         // variable name
         name: String,
-        // storage location
-        storage: Storage,
     },
     Texture {
         // the binding index , might not be contiguous
@@ -1109,8 +1099,6 @@ pub enum BindingEntry {
         input: InputType,
         // variable name
         name: String,
-        // likely just uniform
-        storage: Storage,
     },
     Sampler {
         // the binding index , might not be contiguous
@@ -1124,7 +1112,6 @@ pub enum BindingEntry {
 struct StructDescriptor<'a> {
     padded_size: usize,
     name: String,
-    storage: Storage,
     binding: u32,
     members: &'a [StructMember],
 }
@@ -1139,7 +1126,6 @@ impl BindingEntry {
         let StructDescriptor {
             padded_size,
             name,
-            storage,
             binding,
             members,
         } = desc;
@@ -1172,7 +1158,6 @@ impl BindingEntry {
                 binding,
                 backing: Default::default(),
                 buffer,
-                storage,
             });
         }
 
@@ -1222,18 +1207,7 @@ impl BindingEntry {
             binding,
             inputs,
             buffer,
-            storage,
         })
-    }
-
-    pub fn storage(&self) -> Storage {
-        match self {
-            BindingEntry::UtilityUniformBlock { storage, .. }
-            | BindingEntry::UniformBlock { storage, .. }
-            | BindingEntry::StorageTexture { storage, .. }
-            | BindingEntry::Texture { storage, .. } => *storage,
-            BindingEntry::Sampler { .. } => Storage::Uniform,
-        }
     }
 }
 
@@ -1394,10 +1368,7 @@ impl TweakBindGroup {
                 true
             }
             Some(BindingEntry::StorageTexture {
-                state:
-                    StorageTextureState::Target {
-                    ..
-                    },
+                state: StorageTextureState::Target { .. },
                 ..
             }) => true,
             _ => false,

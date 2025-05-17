@@ -5,10 +5,7 @@ use egui_wgpu::{
 
 use egui_winit::{
     egui::{Color32, FontData, FontDefinitions},
-    winit::{
-        event_loop::{EventLoop, EventLoopBuilder},
-        window::Window,
-    },
+    winit::{event_loop::EventLoop, window::Window},
     State,
 };
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -71,14 +68,6 @@ pub struct Resources {
     pub gui_context: GuiContext,
 }
 
-fn create_window(event_loop: &EventLoop<RunnerMessage>) -> Result<Window, InitializationError> {
-    egui_winit::winit::window::WindowBuilder::new()
-        .with_transparent(true)
-        .with_title("Tweak Shader Runner")
-        .build(event_loop)
-        .map_err(|_| InitializationError::Window)
-}
-
 fn request_adapter(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface,
@@ -102,6 +91,7 @@ fn create_device(
             required_features: wgpu::Features::PUSH_CONSTANTS
                 | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             required_limits,
+            memory_hints: wgpu::MemoryHints::Performance,
         },
         None,
     ))
@@ -190,7 +180,7 @@ fn setup_egui(
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         "Roboto".to_owned(),
-        FontData::from_static(include_bytes!("../resources/Roboto-Regular.ttf")),
+        FontData::from_static(include_bytes!("../resources/Roboto-Regular.ttf")).into(),
     );
     fonts
         .families
@@ -211,10 +201,16 @@ fn setup_egui(
     });
 
     let id = egui_context.viewport_id();
-    let egui_state = State::new(egui_context.clone(), id, &window, None, None);
+    let egui_state = State::new(egui_context.clone(), id, &window, None, None, None);
 
-    let mut egui_painter =
-        egui_wgpu::winit::Painter::new(egui_wgpu::WgpuConfiguration::default(), 1, None, true);
+    let mut egui_painter = pollster::block_on(egui_wgpu::winit::Painter::new(
+        egui_context.clone(),
+        egui_wgpu::WgpuConfiguration::default(),
+        1,
+        None,
+        true,
+        false,
+    ));
 
     let size_in_pixels = [window.inner_size().width, window.inner_size().height];
     let pixels_per_point = window.scale_factor() as f32;
@@ -226,7 +222,7 @@ fn setup_egui(
         pixels_per_point,
     };
 
-    let egui_renderer = egui_wgpu::Renderer::new(device, *swapchain_format, None, 1);
+    let egui_renderer = egui_wgpu::Renderer::new(device, *swapchain_format, None, 1, false);
 
     Ok(GuiContext {
         egui_renderer,
@@ -238,8 +234,14 @@ fn setup_egui(
 }
 
 pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
-    let event_loop: EventLoop<RunnerMessage> = EventLoopBuilder::with_user_event().build().unwrap();
-    let window = create_window(&event_loop)?;
+    let event_loop: EventLoop<RunnerMessage> = EventLoop::with_user_event().build().unwrap();
+
+    let attr = egui_winit::winit::window::Window::default_attributes()
+        .with_transparent(true)
+        .with_title("Tweak Shader Runner");
+
+    #[allow(deprecated)]
+    let window = event_loop.create_window(attr).unwrap();
 
     let instance = if cfg!(windows) {
         let desc = wgpu::InstanceDescriptor {
@@ -247,7 +249,7 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
             ..Default::default()
         };
 
-        wgpu::Instance::new(desc)
+        wgpu::Instance::new(&desc)
     } else {
         wgpu::Instance::default()
     };

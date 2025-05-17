@@ -1,6 +1,6 @@
 [package]
 name = "tweak_shader"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/mobile-bungalow/tweak_shader"
@@ -13,7 +13,7 @@ default = []
 
 [dependencies]
 thiserror = "1.0.63"
-wgpu = { version = "0.20.0", features = ["glsl", "naga-ir"] }
+wgpu = { version = "24.0.0", features = ["glsl", "naga-ir", "webgpu"] }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 nom = "7.1.3"
 

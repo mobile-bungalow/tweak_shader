@@ -134,8 +134,9 @@ impl RenderContext {
                     label: None,
                     layout: Some(&pipeline_layout),
                     module: &compute_mod,
-                    entry_point: "main",
+                    entry_point: "main".into(),
                     compilation_options: Default::default(),
+                    cache: None,
                 });
 
             Pipeline::Compute {
@@ -160,13 +161,13 @@ impl RenderContext {
                 fragment: Some(wgpu::FragmentState {
                     compilation_options: Default::default(),
                     module: &fs_shader_module,
-                    entry_point: "main",
+                    entry_point: "main".into(),
                     targets: &[Some(format.into())],
                 }),
                 vertex: wgpu::VertexState {
                     compilation_options: Default::default(),
                     module: &vs_shader_module,
-                    entry_point: "vs_main",
+                    entry_point: "vs_main".into(),
                     buffers: &[],
                 },
                 primitive: wgpu::PrimitiveState::default(),
@@ -174,6 +175,7 @@ impl RenderContext {
                 multisample: Default::default(),
                 multiview: None,
                 label: None,
+                cache: None,
             });
 
             // HDR pipeline for internal render passes
@@ -182,13 +184,13 @@ impl RenderContext {
                 fragment: Some(wgpu::FragmentState {
                     module: &fs_shader_module,
                     compilation_options: Default::default(),
-                    entry_point: "main",
+                    entry_point: "main".into(),
                     targets: &[Some(pass_texture.into())],
                 }),
                 vertex: wgpu::VertexState {
                     compilation_options: Default::default(),
                     module: &vs_shader_module,
-                    entry_point: "vs_main",
+                    entry_point: "vs_main".into(),
                     buffers: &[],
                 },
                 primitive: wgpu::PrimitiveState::default(),
@@ -196,6 +198,7 @@ impl RenderContext {
                 multisample: Default::default(),
                 multiview: None,
                 label: None,
+                cache: None,
             });
 
             Pipeline::Pixel {
@@ -1124,9 +1127,9 @@ fn read_texture_contents_to_slice(
     // Copy the texture contents to the buffer
     encoder.copy_texture_to_buffer(
         cpu_buffer_cache.tex().as_image_copy(),
-        wgpu::ImageCopyBuffer {
+        wgpu::TexelCopyBufferInfo {
             buffer: cpu_buffer_cache.buf(),
-            layout: wgpu::ImageDataLayout {
+            layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(cpu_buffer_cache.stride as u32),
                 rows_per_image: None,
@@ -1152,7 +1155,7 @@ fn read_texture_contents_to_slice(
     {
         let buffer_slice = cpu_buffer_cache.buf.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::Maintain::Wait);
 
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(cpu_buffer_cache.stride);

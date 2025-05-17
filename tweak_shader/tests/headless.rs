@@ -11,6 +11,7 @@ const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
     mip_level_count: Some(1),
     base_array_layer: 0,
     array_layer_count: Some(1),
+    usage: None,
 };
 
 macro_rules! png_pixels {
@@ -43,14 +44,14 @@ const BASIC_SRC: &str = r#"
 
 #pragma utility_block(ShaderInputs)
 layout(set = 0, binding = 0) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
-    float frame_rate; 
-    uint frame_index;  
-    vec4 mouse;       
-    vec4 date;        
-    vec3 resolution;  
-    uint pass_index;   
+    float time;
+    float time_delta;
+    float frame_rate;
+    uint frame_index;
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 #pragma input(float, name="foo", default=0.0)
@@ -58,7 +59,7 @@ layout(set = 1, binding = 0) uniform Ecco {
     float foo;
 };
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 
 void main()
@@ -201,12 +202,12 @@ const PUSH_CONSTANT_ALIGNMENT_SRC: &str = r#"
 #pragma input(float, name="foo", default=0.0)
 layout(push_constant) uniform ShaderInputs {
     vec3 mess_up;
-    float time;       
+    float time;
     float foo;
     mat4 brogan;
 };
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 
 void main()
@@ -256,14 +257,14 @@ const PUSH_CONSTANTS: &str = r#"
 
 #pragma utility_block(ShaderInputs)
 layout(push_constant) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
-    float frame_rate; 
-    uint frame_index;  
-    vec4 mouse;       
-    vec4 date;        
-    vec3 resolution;  
-    uint pass_index;   
+    float time;
+    float time_delta;
+    float frame_rate;
+    uint frame_index;
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 #pragma input(float, name="foo", default=0.0)
@@ -271,7 +272,7 @@ layout(set = 1, binding = 0) uniform Ecco {
     float foo;
 };
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 
 void main()
@@ -318,21 +319,21 @@ const TOO_MANY_PUSH_CONSTANTS: &str = r#"
 
 #pragma utility_block(ShaderInputs)
 layout(push_constant) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
-    float frame_rate; 
-    uint frame_index;  
-    vec4 mouse;       
-    vec4 date;        
-    vec3 resolution;  
-    uint pass_index;   
+    float time;
+    float time_delta;
+    float frame_rate;
+    uint frame_index;
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 layout(push_constant) uniform Doofus {
     uint no;
 };
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 void main()
 {
@@ -359,14 +360,14 @@ const PERSISTENT_SRC: &str = r#"
 
 #pragma utility_block(ShaderInputs)
 layout(set = 0, binding = 0) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
+    float time;
+    float time_delta;
     float frame_rate;
     uint frame_index;
-    vec4 mouse;    
-    vec4 date;        
-    vec3 resolution;  
-    uint pass_index;   
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 #pragma input(color, name=data, default = [0.95, 0.25, 0, 1])
@@ -378,7 +379,7 @@ layout(set = 0, binding = 3) uniform Data {
 layout(set=0, binding=1) uniform sampler default_sampler;
 layout(set=0, binding=2) uniform texture2D dataHistory;
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 
 void main()	{
@@ -390,7 +391,7 @@ void main()	{
 	    inputPixelColor = texture(sampler2D(dataHistory, default_sampler), vec2(loc.x - 1.0, 0.0) / fsize);
 	    if (floor(loc.x) == 0.0)	{
 	    	inputPixelColor = data;
-	    } 
+	    }
     } else {
 	    vec4 val = texture(sampler2D(dataHistory, default_sampler), loc / fsize);
 	    inputPixelColor = val;
@@ -458,21 +459,21 @@ const SHRIMPLE_TEXTURE_LOAD: &str = r#"
 
 #pragma utility_block(ShaderInputs)
 layout(set = 1, binding = 0) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
-    float frame_rate; 
-    uint frame_index;  
-    vec4 mouse;       
-    vec4 date;        
-    vec3 resolution;  
-    uint pass_index;   
+    float time;
+    float time_delta;
+    float frame_rate;
+    uint frame_index;
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 #pragma input(image, name="input_image")
 layout(set=1, binding=1) uniform sampler default_sampler;
 layout(set=1, binding=2) uniform texture2D input_image;
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 void main() {
 	vec2 uv = gl_FragCoord.xy / resolution.xy;
@@ -686,7 +687,7 @@ const INPUTS_ITER: &str = r#"
 
 #pragma tweak_shader(version=1.0)
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 #pragma input(color, name=topColor, default=[0.0, 0.0, 0.0, 1.0])
 #pragma input(color, name=bottomColor, default=[0.0, 0.5, 0.8999, 1.0])
@@ -849,11 +850,11 @@ layout(local_size_x = 16, local_size_y = 16) in;
 void main() {
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 image_size = imageSize(output_image);
-    
+
     vec2 normalized_coords = vec2(pixel_coords) / vec2(image_size);
-    
+
     vec4 color = vec4(normalized_coords.x, normalized_coords.y, blue, 1.0);
-    
+
     vec4 inverse = vec4(vec3(1.0) - color.xyz, 1.0);
     imageStore(output_image, pixel_coords, color);
     imageStore(screen_two, pixel_coords, inverse);
@@ -897,14 +898,14 @@ const COMPUTE_MULTIPASS: &str = r#"
 
 #pragma utility_block(ShaderInputs)
 layout(push_constant) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
-    float frame_rate; 
-    uint frame_index;  
-    vec4 mouse;       
-    vec4 date;        
-    vec3 resolution;  
-    uint pass_index;   
+    float time;
+    float time_delta;
+    float frame_rate;
+    uint frame_index;
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 #pragma target(name="output_image", screen)
@@ -919,9 +920,9 @@ layout(local_size_x = 16, local_size_y = 16) in;
 void main() {
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 image_size = imageSize(output_image);
-    
+
     vec2 normalized_coords = vec2(pixel_coords) / vec2(image_size);
-    
+
     vec4 color = vec4(normalized_coords.x, normalized_coords.y, 1.0, 1.0);
     vec4 mask = texelFetch(relay_target, pixel_coords, 0);
     float center_circle = step(length(normalized_coords - vec2(0.5)), 0.2);
@@ -961,14 +962,14 @@ const NO_EXCESS: &str = r#"
 
 #pragma utility_block(ShaderInputs)
 layout(set = 0, binding = 0) uniform ShaderInputs {
-    float time;       
-    float time_delta; 
-    float frame_rate; 
-    uint frame_index;  
-    vec4 mouse;       
-    vec4 date;        
-    vec3 resolution;  
-    uint pass_index;   
+    float time;
+    float time_delta;
+    float frame_rate;
+    uint frame_index;
+    vec4 mouse;
+    vec4 date;
+    vec3 resolution;
+    uint pass_index;
 };
 
 #pragma input(float, name="foo", default=0.0)
@@ -981,7 +982,7 @@ layout(set = 1, binding = 0) uniform Ecco {
     float foo;
 };
 
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 
 void main()
@@ -1025,7 +1026,7 @@ const LETTERBOX: &str = "
 #pragma input(image, name=image)
 layout(set=0, binding=1) uniform sampler default_sampler;
 layout(set=0, binding=2) uniform texture2D image;
-layout(location = 0) out vec4 out_color; 
+layout(location = 0) out vec4 out_color;
 
 void main() {
 	vec2 uv = gl_FragCoord.xy / vec2(256.0, 256.0);
@@ -1116,7 +1117,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
             ..Default::default()
         };
 
-        wgpu::Instance::new(desc)
+        wgpu::Instance::new(&desc)
     } else {
         wgpu::Instance::default()
     };
@@ -1143,6 +1144,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
                         | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
                         | wgpu::Features::CLEAR_TEXTURE,
                     required_limits,
+                    memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
             )
@@ -1256,9 +1258,9 @@ fn read_texture_contents_to_slice(
     // Copy the texture contents to the buffer
     encoder.copy_texture_to_buffer(
         texture.as_image_copy(),
-        wgpu::ImageCopyBuffer {
+        wgpu::TexelCopyBufferInfo {
             buffer: &buffer,
-            layout: wgpu::ImageDataLayout {
+            layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(padded_row_byte_ct),
                 rows_per_image: None,
