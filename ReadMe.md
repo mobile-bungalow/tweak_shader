@@ -19,6 +19,8 @@ composable post processing effects, generative art, reactive visuals and animati
 
 ### Usage
 
+You can try the [web demo here](https://mobile-bungalow.github.io/tweak_shader_web/)
+
 Run any of the examples under `tweak_shader_examples` with
 
 ```bash
