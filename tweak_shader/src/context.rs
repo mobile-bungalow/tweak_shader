@@ -112,6 +112,16 @@ impl RenderContext {
         let bind_group_layouts: Vec<_> = uniforms.iter_layouts().collect();
         let is_compute = document.stage == ShaderStage::Compute;
 
+        let glsl_mod = wgpu::ShaderSource::Glsl {
+            shader: stripped_src.clone().into(),
+            stage: if is_compute {
+                ShaderStage::Compute
+            } else {
+                ShaderStage::Fragment
+            },
+            defines: &[("TWEAK_SHADER", "1")],
+        };
+
         let push_constant_ranges = uniforms
             .push_constant_ranges(is_compute)
             .map(|e| vec![e])
@@ -126,7 +136,7 @@ impl RenderContext {
         let pipeline = if is_compute {
             let compute_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+                source: glsl_mod,
             });
 
             let compute_pipeline =
@@ -146,7 +156,7 @@ impl RenderContext {
         } else {
             let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(naga_mod.clone())),
+                source: glsl_mod,
             });
 
             let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1155,7 +1165,7 @@ fn read_texture_contents_to_slice(
     {
         let buffer_slice = cpu_buffer_cache.buf.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
-        let _ = device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::PollType::Wait);
 
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(cpu_buffer_cache.stride);

@@ -1137,17 +1137,15 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
 
     let (d, q) = pollster::block_on(async {
         adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::PUSH_CONSTANTS
-                        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                        | wgpu::Features::CLEAR_TEXTURE,
-                    required_limits,
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::PUSH_CONSTANTS
+                    | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                    | wgpu::Features::CLEAR_TEXTURE,
+                required_limits,
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
             .await
             .expect("Failed to create device")
     });
@@ -1278,7 +1276,7 @@ fn read_texture_contents_to_slice(
     {
         let buffer_slice = buffer.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
-        device.poll(wgpu::Maintain::Wait);
+        device.poll(wgpu::PollType::Wait).unwrap();
 
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(padded_row_byte_ct as usize);
@@ -1291,4 +1289,42 @@ fn read_texture_contents_to_slice(
     };
 
     buffer.unmap();
+}
+
+const MALFORMED_PUSH_CONSTANTS: &str = r#"
+#version 450
+
+#pragma tweak_shader(version=1.0)
+#pragma stage(compute)
+
+layout(push_constant) uniform PushConstants {
+    float add_1;
+};
+
+
+layout(local_size_x=1, local_size_y=1, local_size_z=1) in;
+void main() {
+    vec2 v = vec2(0.0) + vec2(); // specifically this kind of error triggers a panic in version 24 of naga.
+}
+"#;
+
+#[test]
+fn test_malformed_shader_behavior() {
+    let (device, queue) = set_up_wgpu();
+
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+    let result = RenderContext::new(
+        MALFORMED_PUSH_CONSTANTS,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &device,
+        &queue,
+    );
+
+    println!("RenderContext::new result: {:?}", result);
+
+    match result {
+        Err(e) => println!("Got error as expected: {}", e),
+        Ok(_) => panic!("Should not compile!!"),
+    }
 }

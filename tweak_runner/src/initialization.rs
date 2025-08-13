@@ -77,7 +77,7 @@ fn request_adapter(
         force_fallback_adapter: false,
         compatible_surface: Some(surface),
     }))
-    .ok_or(InitializationError::AdapterRequestError)
+    .map_err(|_| InitializationError::AdapterRequestError)
 }
 
 fn create_device(
@@ -85,16 +85,14 @@ fn create_device(
 ) -> Result<(wgpu::Device, wgpu::Queue), InitializationError> {
     let mut required_limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
     required_limits.max_push_constant_size = 128;
-    pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::PUSH_CONSTANTS
-                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-            required_limits,
-            memory_hints: wgpu::MemoryHints::Performance,
-        },
-        None,
-    ))
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: None,
+        required_features: wgpu::Features::PUSH_CONSTANTS
+            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+        required_limits,
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
     .map_err(|_| InitializationError::DeviceCreationError)
 }
 
