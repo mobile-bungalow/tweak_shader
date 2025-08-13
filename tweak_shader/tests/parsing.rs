@@ -189,14 +189,16 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
 
     pollster::block_on(async {
         adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
-                memory_hints: MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-            })
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                        .using_resolution(adapter.limits()),
+                    memory_hints: MemoryHints::Performance,
+                },
+                None,
+            )
             .await
             .expect("Failed to create device")
     })

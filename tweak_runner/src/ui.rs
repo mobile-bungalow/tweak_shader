@@ -360,10 +360,10 @@ fn point_selector(
                     ];
                 }
             }
-            let point = Points::new(
-                "vec2",
-                PlotPoints::Owned(vec![PlotPoint::new(input.current[0], input.current[1])]),
-            )
+            let point = Points::new(PlotPoints::Owned(vec![PlotPoint::new(
+                input.current[0],
+                input.current[1],
+            )]))
             .radius(5.0);
             plot_ui.points(point);
         });

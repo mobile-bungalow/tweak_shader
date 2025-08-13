@@ -5,6 +5,9 @@ use wgpu::naga;
 
 use naga::{front::glsl::Options, ShaderStage};
 
+#[cfg(not(target_arch = "wasm32"))]
+use pollster::FutureExt;
+
 use crate::Error;
 
 use wgpu::TextureFormat;
@@ -119,7 +122,9 @@ impl RenderContext {
             } else {
                 ShaderStage::Fragment
             },
-            defines: &[("TWEAK_SHADER", "1")],
+            defines: [("TWEAK_SHADER".to_owned(), "1".to_owned())]
+                .into_iter()
+                .collect(),
         };
 
         let push_constant_ranges = uniforms
@@ -134,10 +139,18 @@ impl RenderContext {
         });
 
         let pipeline = if is_compute {
+            #[cfg(not(target_arch = "wasm32"))]
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+
             let compute_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
                 source: glsl_mod,
             });
+
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(error) = device.pop_error_scope().block_on() {
+                return Err(Error::ShaderCompilationFailed(format!("{}", error)));
+            }
 
             let compute_pipeline =
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -154,10 +167,18 @@ impl RenderContext {
                 workgroups: uniforms::work_groups_from_naga(&naga_mod),
             }
         } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+
             let fs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
                 source: glsl_mod,
             });
+
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(error) = device.pop_error_scope().block_on() {
+                return Err(Error::ShaderCompilationFailed(format!("{}", error)));
+            }
 
             let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
@@ -1165,7 +1186,7 @@ fn read_texture_contents_to_slice(
     {
         let buffer_slice = cpu_buffer_cache.buf.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
-        let _ = device.poll(wgpu::PollType::Wait);
+        let _ = device.poll(wgpu::Maintain::Wait);
 
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(cpu_buffer_cache.stride);
