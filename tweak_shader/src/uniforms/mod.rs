@@ -884,7 +884,7 @@ impl Uniforms {
         }
     }
 
-    pub fn get_input_mut(&mut self, name: &str) -> Option<MutInput> {
+    pub fn get_input_mut(&mut self, name: &str) -> Option<MutInput<'_>> {
         let out = self
             .push_constants
             .as_mut()
@@ -917,12 +917,12 @@ impl Uniforms {
         }
     }
 
-    fn query_addr_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
+    fn query_addr_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput<'_>> {
         let set = self.sets.get_mut(addr.set)?;
         set.get_mut(name, addr)
     }
 
-    pub fn iter_custom_uniforms_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
+    pub fn iter_custom_uniforms_mut(&mut self) -> impl Iterator<Item = (&String, MutInput<'_>)> {
         let push = if let Some(PushConstant::Struct { inputs, .. }) = self.push_constants.as_mut() {
             Some(Box::new(inputs.iter_mut().map(|(k, v)| (k, v.into())))
                 as Box<dyn Iterator<Item = _>>)
@@ -1191,7 +1191,7 @@ impl BindingEntry {
             .max()
             .unwrap_or(0);
 
-        let align = (align + 15) / 16 * 16;
+        let align = align.div_ceil(16) * 16;
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -1312,7 +1312,7 @@ pub struct TweakBindGroup {
 }
 
 impl TweakBindGroup {
-    fn get_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput> {
+    fn get_mut(&mut self, name: &str, addr: &VariableAddress) -> Option<MutInput<'_>> {
         match self.binding_entries.get_mut(addr.binding)? {
             BindingEntry::Texture { input, .. } => Some(input.into()),
             BindingEntry::UniformBlock { inputs, .. } => inputs.get_mut(name).map(|i| i.into()),

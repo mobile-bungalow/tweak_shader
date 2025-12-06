@@ -85,7 +85,7 @@ impl<'a> MutInput<'a> {
 
     /// Returns a reference to the internal i32 if the input is an int
     /// and none otherwise, includes and optional vec of labels for i32 values
-    pub fn as_int(&mut self) -> Option<MutInputInt> {
+    pub fn as_int(&mut self) -> Option<MutInputInt<'_>> {
         extract!(self.inner, InputType::Int(value, labels) => MutInputInt { value, labels})
     }
 

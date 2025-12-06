@@ -664,7 +664,7 @@ impl App {
                     }
                 }
             }
-            RunnerMessage::WatchedFileChanged { .. } => {
+            RunnerMessage::WatchedFileChanged => {
                 if !self.ui_state.options.halt_recompilation {
                     self.recompile_scheduled = true
                 }
@@ -672,7 +672,7 @@ impl App {
             RunnerMessage::TogglePause => {
                 self.ui_state.options.paused = !self.ui_state.options.paused;
             }
-            RunnerMessage::WatchedFileDeleted { .. } => {
+            RunnerMessage::WatchedFileDeleted => {
                 self.queue_message(RunnerMessage::PrintEphemralError {
                     error: "Dude Wheres my Shader? : Shader file deleted.".to_string(),
                 });

@@ -535,7 +535,7 @@ impl RenderContext {
     /// the inputs provided by the user, as well as
     /// the raw bytes of all the uniforms maintained by the [RenderContext]
     /// that do not have input pragmas.
-    pub fn iter_inputs_mut(&mut self) -> impl Iterator<Item = (&String, MutInput)> {
+    pub fn iter_inputs_mut(&mut self) -> impl Iterator<Item = (&String, MutInput<'_>)> {
         self.uniforms.iter_custom_uniforms_mut()
     }
 
@@ -548,7 +548,7 @@ impl RenderContext {
     }
 
     /// Returns an option of a mutable reference to the custom input of the given name if it exists
-    pub fn get_input_mut(&mut self, name: &str) -> Option<MutInput> {
+    pub fn get_input_mut(&mut self, name: &str) -> Option<MutInput<'_>> {
         self.uniforms.get_input_mut(name)
     }
 
