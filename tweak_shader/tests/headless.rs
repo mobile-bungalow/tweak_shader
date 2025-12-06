@@ -4,18 +4,6 @@ use tweak_shader::RenderContext;
 
 const TEST_RENDER_DIM: u32 = 256;
 
-const DEFAULT_VIEW: wgpu::TextureViewDescriptor = wgpu::TextureViewDescriptor {
-    label: Some("Default View"),
-    format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-    dimension: Some(wgpu::TextureViewDimension::D2),
-    aspect: wgpu::TextureAspect::All,
-    base_mip_level: 0,
-    mip_level_count: Some(1),
-    base_array_layer: 0,
-    array_layer_count: Some(1),
-    usage: None,
-};
-
 macro_rules! png_pixels {
     ($file_path:literal) => {{
         // Load the PNG data using include_bytes!
@@ -1084,9 +1072,6 @@ fn letterboxed_shrimple_texture_load() {
     // render output again with letterbox
     let shared_tex = device.create_texture(&target_desc(TEST_RENDER_DIM, TEST_RENDER_DIM));
 
-    let mut desc = DEFAULT_VIEW;
-    desc.format = Some(shared_tex.format());
-
     if !letterbox.load_shared_texture(&shared_tex, "image") {
         panic!("Texture Missing!");
     }
@@ -1279,10 +1264,12 @@ fn read_texture_contents_to_slice(
     {
         let buffer_slice = buffer.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
-        device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
 
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(padded_row_byte_ct as usize);
