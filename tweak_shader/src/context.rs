@@ -122,9 +122,7 @@ impl RenderContext {
             } else {
                 ShaderStage::Fragment
             },
-            defines: [("TWEAK_SHADER".to_owned(), "1".to_owned())]
-                .into_iter()
-                .collect(),
+            defines: &[("TWEAK_SHADER", "1")],
         };
 
         let push_constant_ranges = uniforms
@@ -402,6 +400,7 @@ impl RenderContext {
                             load: pass.get_load_op(),
                             store: wgpu::StoreOp::Store,
                         },
+                        depth_slice: None,
                     })],
                     occlusion_query_set: None,
                     timestamp_writes: None,
@@ -429,6 +428,7 @@ impl RenderContext {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
                         },
+                        depth_slice: None,
                     })],
                     occlusion_query_set: None,
                     timestamp_writes: None,
@@ -517,6 +517,7 @@ impl RenderContext {
                                     }),
                                     store: wgpu::StoreOp::Store,
                                 },
+                                depth_slice: None,
                             })],
                             depth_stencil_attachment: None,
                             occlusion_query_set: None,
@@ -1186,7 +1187,10 @@ fn read_texture_contents_to_slice(
     {
         let buffer_slice = cpu_buffer_cache.buf.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
-        let _ = device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(cpu_buffer_cache.stride);

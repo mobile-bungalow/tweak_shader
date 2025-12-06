@@ -1,6 +1,6 @@
 use egui_wgpu::{
-    wgpu::{self, CompositeAlphaMode},
-    ScreenDescriptor,
+    wgpu::{self, CompositeAlphaMode, ExperimentalFeatures},
+    RendererOptions, ScreenDescriptor,
 };
 
 use egui_winit::{
@@ -9,7 +9,7 @@ use egui_winit::{
     State,
 };
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use crate::app::RunnerMessage;
 
@@ -77,7 +77,7 @@ fn request_adapter(
         force_fallback_adapter: false,
         compatible_surface: Some(surface),
     }))
-    .ok_or(InitializationError::AdapterRequestError)
+    .map_err(|_| InitializationError::AdapterRequestError)
 }
 
 fn create_device(
@@ -85,16 +85,15 @@ fn create_device(
 ) -> Result<(wgpu::Device, wgpu::Queue), InitializationError> {
     let mut required_limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
     required_limits.max_push_constant_size = 128;
-    pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::PUSH_CONSTANTS
-                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-            required_limits,
-            memory_hints: wgpu::MemoryHints::Performance,
-        },
-        None,
-    ))
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: None,
+        required_features: wgpu::Features::PUSH_CONSTANTS
+            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+        required_limits,
+        memory_hints: wgpu::MemoryHints::Performance,
+        experimental_features: ExperimentalFeatures::disabled(),
+        trace: wgpu::Trace::Off,
+    }))
     .map_err(|_| InitializationError::DeviceCreationError)
 }
 
@@ -206,10 +205,8 @@ fn setup_egui(
     let mut egui_painter = pollster::block_on(egui_wgpu::winit::Painter::new(
         egui_context.clone(),
         egui_wgpu::WgpuConfiguration::default(),
-        1,
-        None,
         true,
-        false,
+        egui_wgpu::RendererOptions::default(),
     ));
 
     let size_in_pixels = [window.inner_size().width, window.inner_size().height];
@@ -222,7 +219,8 @@ fn setup_egui(
         pixels_per_point,
     };
 
-    let egui_renderer = egui_wgpu::Renderer::new(device, *swapchain_format, None, 1, false);
+    let egui_renderer =
+        egui_wgpu::Renderer::new(device, *swapchain_format, RendererOptions::default());
 
     Ok(GuiContext {
         egui_renderer,
@@ -264,7 +262,7 @@ pub fn initialize(path: &Path) -> Result<Resources, InitializationError> {
     let (device, queue) = create_device(&adapter)?;
 
     let error_proxy = event_loop.create_proxy();
-    device.on_uncaptured_error(Box::new(move |e| match e {
+    device.on_uncaptured_error(Arc::new(move |e| match e {
         wgpu::Error::Internal {
             source,
             description,

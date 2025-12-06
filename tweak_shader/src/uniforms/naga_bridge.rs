@@ -391,6 +391,16 @@ pub fn image_entry_from_naga(
             count,
             visibility: ShaderStages::COMPUTE | ShaderStages::FRAGMENT,
         },
+        naga::ImageClass::External => wgpu::BindGroupLayoutEntry {
+            ty: wgpu::BindingType::Texture {
+                sample_type: sample_kind(&naga::ScalarKind::Float, format),
+                view_dimension: image_dim(dim)?,
+                multisampled: false,
+            },
+            visibility: ShaderStages::all(),
+            binding,
+            count,
+        },
     };
     Ok(out)
 }

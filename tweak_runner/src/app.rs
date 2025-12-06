@@ -409,7 +409,7 @@ impl App {
             wgpu_device,
             wgpu_queue,
             &mut wgpu_encoder,
-            &prims,
+            prims.as_slice(),
             &self.gui_context.egui_screen_desc,
         );
 
@@ -423,6 +423,7 @@ impl App {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,

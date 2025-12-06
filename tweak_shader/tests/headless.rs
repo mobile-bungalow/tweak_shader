@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tweak_shader::RenderContext;
 
 const TEST_RENDER_DIM: u32 = 256;
@@ -1137,22 +1139,21 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
 
     let (d, q) = pollster::block_on(async {
         adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::PUSH_CONSTANTS
-                        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                        | wgpu::Features::CLEAR_TEXTURE,
-                    required_limits,
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::PUSH_CONSTANTS
+                    | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                    | wgpu::Features::CLEAR_TEXTURE,
+                required_limits,
+                memory_hints: wgpu::MemoryHints::Performance,
+                experimental_features: ExperimentalFeatures::disabled(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .expect("Failed to create device")
     });
 
-    d.on_uncaptured_error(Box::new(|e| match e {
+    d.on_uncaptured_error(Arc::new(|e| match e {
         wgpu::Error::Internal {
             source,
             description,
@@ -1172,7 +1173,7 @@ fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {
     (d, q)
 }
 use image::{ImageBuffer, ImageFormat, Rgba};
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt, ExperimentalFeatures};
 
 fn approximately_equivalent(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len()
@@ -1278,7 +1279,10 @@ fn read_texture_contents_to_slice(
     {
         let buffer_slice = buffer.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |r| r.unwrap());
-        device.poll(wgpu::Maintain::Wait);
+        device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         let gpu_slice = buffer_slice.get_mapped_range();
         let gpu_chunks = gpu_slice.chunks(padded_row_byte_ct as usize);
