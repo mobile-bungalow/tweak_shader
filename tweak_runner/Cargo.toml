@@ -4,6 +4,9 @@ version = "0.3.0"
 edition = "2021"
 description = "a runner for the tweak shader library."
 license = "MIT"
+repository = "https://github.com/mobile-bungalow/tweak_shader"
+documentation = "https://docs.rs/tweak_runner"
+keywords = ["graphics", "wgpu", "shadertoy", "shader", "live-coding"]
 
 [features]
 default = []
@@ -14,7 +17,7 @@ version = "6.0.0"
 optional = true
 
 [dependencies]
-tweak_shader = { path = "../tweak_shader/" }
+tweak_shader = { version = "0.5.0", path = "../tweak_shader/" }
 egui-wgpu = { version = "0.33.2", features = ["winit"] }
 egui-notify = "0.21.0"
 egui-winit = "0.33.2"
