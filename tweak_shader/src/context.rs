@@ -818,7 +818,7 @@ impl RenderContext {
 
     /// Returns true if this render context builds up
     /// a state over its runtime using persistent targets
-    pub fn is_stateful(&mut self) -> bool {
+    pub fn is_stateful(&self) -> bool {
         self.passes.iter().any(|pass| pass.persistent)
             || self.uniforms.iter_targets().any(|targ| targ.persistent)
     }
