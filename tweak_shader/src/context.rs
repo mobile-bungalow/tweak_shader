@@ -75,8 +75,9 @@ impl RenderContext {
 
         let naga_mod = glsl::Frontend::default()
             .parse(&options, &stripped_src)
-            .map_err(|e| {
-                Error::ShaderCompilationFailed(display_errors(&e.errors, &stripped_src))
+            .map_err(|e| Error::ShaderCompilationFailed {
+                display: display_errors(&e.errors, &stripped_src),
+                _error_list: e.errors.into_iter().map(|s| (s.meta, s.kind)).collect(),
             })?;
 
         // internal passes should be HDR, they are often used
@@ -147,7 +148,10 @@ impl RenderContext {
 
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(error) = device.pop_error_scope().block_on() {
-                return Err(Error::ShaderCompilationFailed(format!("{}", error)));
+                return Err(Error::ShaderCompilationFailed {
+                    display: format!("{error:?}"),
+                    _error_list: vec![],
+                });
             }
 
             let compute_pipeline =
@@ -175,7 +179,10 @@ impl RenderContext {
 
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(error) = device.pop_error_scope().block_on() {
-                return Err(Error::ShaderCompilationFailed(format!("{}", error)));
+                return Err(Error::ShaderCompilationFailed {
+                    display: format!("{error:?}"),
+                    _error_list: vec![],
+                });
             }
 
             let vs_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {

@@ -14,13 +14,17 @@ pub use context::{RenderContext, TextureDesc};
 pub(crate) type VarName = String;
 
 use thiserror::Error;
+use wgpu::naga::{self, Span};
 
 /// Joint error type
 #[derive(Debug, Error)]
 pub enum Error {
     /// Thrown if the shader compilation fails, includes a newline separated list of compile errors.
-    #[error("Shader compilation failed: {0}")]
-    ShaderCompilationFailed(String),
+    #[error("Shader compilation failed: {display}")]
+    ShaderCompilationFailed {
+        display: String,
+        _error_list: Vec<(Span, naga::front::glsl::ErrorKind)>,
+    },
 
     /// Thrown if a pragma is malformed
     #[error("Document parsing failed: {0}")]
