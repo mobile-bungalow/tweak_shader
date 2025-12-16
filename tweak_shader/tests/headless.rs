@@ -1164,7 +1164,7 @@ fn approximately_equivalent(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len()
         && a.iter()
             .zip(b.iter())
-            .map(|(a, b)| if a < b { b - a } else { a - b })
+            .map(|(a, b)| a.abs_diff(*b))
             .enumerate()
             .all(|(idx, abs_diff)| {
                 let pixel = idx / 4;
