@@ -2779,7 +2779,7 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "tweak_runner"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "cpal",
@@ -2799,7 +2799,7 @@ dependencies = [
 
 [[package]]
 name = "tweak_shader"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "bytemuck",
  "gloo-timers",
