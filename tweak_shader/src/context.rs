@@ -1,5 +1,6 @@
 use crate::input_type::*;
 use crate::uniforms;
+use crate::{ErrorLocation, ShaderError};
 use naga::front::glsl;
 use wgpu::naga;
 
@@ -62,7 +63,13 @@ impl RenderContext {
 
         let stripped_src: String = source
             .lines()
-            .filter(|line| !line.trim().starts_with("#pragma"))
+            .map(|line| {
+                if line.trim().starts_with("#pragma") {
+                    format!("//{line}")
+                } else {
+                    line.to_string()
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -77,7 +84,23 @@ impl RenderContext {
             .parse(&options, &stripped_src)
             .map_err(|e| Error::ShaderCompilationFailed {
                 display: display_errors(&e.errors, &stripped_src),
-                _error_list: e.errors.into_iter().map(|s| (s.meta, s.kind)).collect(),
+                errors: e
+                    .errors
+                    .into_iter()
+                    .map(|s| {
+                        let location = s
+                            .location(&stripped_src)
+                            .map(|loc| ErrorLocation {
+                                line: loc.line_number,
+                                column: loc.line_position,
+                            })
+                            .unwrap_or_default();
+                        ShaderError {
+                            location,
+                            kind: s.kind,
+                        }
+                    })
+                    .collect(),
             })?;
 
         // internal passes should be HDR, they are often used
@@ -150,7 +173,7 @@ impl RenderContext {
             if let Some(error) = device.pop_error_scope().block_on() {
                 return Err(Error::ShaderCompilationFailed {
                     display: format!("{error:?}"),
-                    _error_list: vec![],
+                    errors: vec![],
                 });
             }
 
@@ -181,7 +204,7 @@ impl RenderContext {
             if let Some(error) = device.pop_error_scope().block_on() {
                 return Err(Error::ShaderCompilationFailed {
                     display: format!("{error:?}"),
-                    _error_list: vec![],
+                    errors: vec![],
                 });
             }
 

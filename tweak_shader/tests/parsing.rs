@@ -1,4 +1,4 @@
-use tweak_shader::{input_type::InputType, RenderContext};
+use tweak_shader::{input_type::InputType, Error, RenderContext};
 use wgpu::{ExperimentalFeatures, MemoryHints};
 
 const TEST_NO_INPUTS: &str = r"
@@ -162,6 +162,53 @@ fn missing_inputs() {
     );
 
     assert!(context_result.is_err());
+}
+
+// Shader with a syntax error on a known line
+const SHADER_WITH_ERROR: &str = r#"#version 450
+#pragma input(float, name=brightness)
+
+layout(set = 0, binding = 0) uniform Inputs {
+    float brightness;
+};
+
+void main() {
+    float x = undefined_variable;
+}
+"#;
+
+#[test]
+fn test_error_location_retrieval() {
+    let (device, queue) = set_up_wgpu();
+
+    let result = RenderContext::new(
+        SHADER_WITH_ERROR,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        &device,
+        &queue,
+    );
+
+    match result {
+        Err(Error::ShaderCompilationFailed { errors, .. }) => {
+            assert!(!errors.is_empty(), "Expected at least one error");
+
+            let first_error = &errors[0];
+            // The error should be on line 9 (the line with undefined_variable)
+            // Line numbers are 1-based
+            assert_eq!(
+                first_error.location.line, 9,
+                "Error should be on line 9, got line {}",
+                first_error.location.line
+            );
+            // Column should be non-zero (1-based)
+            assert!(
+                first_error.location.column > 0,
+                "Column should be 1-based and greater than 0"
+            );
+        }
+        Ok(_) => panic!("Expected shader compilation to fail"),
+        Err(other) => panic!("Expected ShaderCompilationFailed, got {:?}", other),
+    }
 }
 
 fn set_up_wgpu() -> (wgpu::Device, wgpu::Queue) {

@@ -1312,10 +1312,7 @@ fn test_validation_error_handling() {
     );
 
     match result {
-        Err(tweak_shader::Error::ShaderCompilationFailed {
-            display,
-            _error_list,
-        }) => {
+        Err(tweak_shader::Error::ShaderCompilationFailed { display, errors: _ }) => {
             println!("Got expected validation error: {}", display);
             assert!(
                 display.contains("validation error"),

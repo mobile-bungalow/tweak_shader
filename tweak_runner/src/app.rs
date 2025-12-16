@@ -141,10 +141,7 @@ impl App {
             (Ok(runner), None) => AppStatus::Ok { runner },
             (Err(e), _) => {
                 let out = match e {
-                    Error::ShaderCompilationFailed {
-                        display,
-                        _error_list,
-                    } => display,
+                    Error::ShaderCompilationFailed { display, .. } => display,
                     Error::UniformError(s) => s.to_string(),
                     Error::DocumentParsingFailed(s) => s.to_string(),
                 };

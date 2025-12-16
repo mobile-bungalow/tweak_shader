@@ -1,3 +1,5 @@
+#![allow(unused_assignments)] // false positive from thiserror macro expansion
+
 #[doc = include_str!("../ReadMe.md")]
 pub(crate) mod context;
 
@@ -14,7 +16,24 @@ pub use context::{RenderContext, TextureDesc};
 pub(crate) type VarName = String;
 
 use thiserror::Error;
-use wgpu::naga::{self, Span};
+use wgpu::naga::{self};
+
+#[derive(Debug, Clone, Default)]
+pub struct ErrorLocation {
+    /// 1-based line number where the error occurred.
+    pub line: u32,
+    /// 1-based column number where the error occurred.
+    pub column: u32,
+}
+
+/// A shader compilation error with location and kind information.
+#[derive(Debug, Clone)]
+pub struct ShaderError {
+    /// The location of the error in the source code.
+    pub location: ErrorLocation,
+    /// The type of error that occurred.
+    pub kind: naga::front::glsl::ErrorKind,
+}
 
 /// Joint error type
 #[derive(Debug, Error)]
@@ -23,7 +42,7 @@ pub enum Error {
     #[error("Shader compilation failed: {display}")]
     ShaderCompilationFailed {
         display: String,
-        _error_list: Vec<(Span, naga::front::glsl::ErrorKind)>,
+        errors: Vec<ShaderError>,
     },
 
     /// Thrown if a pragma is malformed
