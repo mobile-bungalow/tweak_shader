@@ -5,7 +5,7 @@ use super::{
 use crate::input_type::InputType;
 use wgpu::{
     self,
-    naga::{self, StorageAccess},
+    naga::{self, ShaderStage, StorageAccess},
     util::DeviceExt,
     ShaderStages, TextureFormat,
 };
@@ -84,7 +84,14 @@ impl TweakBindGroup {
                     arrayed,
                     class,
                 } => {
-                    let entry = image_entry_from_naga(class, dim, *arrayed, binding, format)?;
+                    let entry = image_entry_from_naga(
+                        class,
+                        dim,
+                        *arrayed,
+                        binding,
+                        format,
+                        document.stage,
+                    )?;
 
                     if let wgpu::BindingType::StorageTexture { format, .. } = entry.ty {
                         let pixel_size = format.block_copy_size(None).unwrap();
@@ -357,7 +364,13 @@ pub fn image_entry_from_naga(
     arrayed: bool,
     binding: u32,
     format: &wgpu::TextureFormat,
+    stage: ShaderStage,
 ) -> Result<wgpu::BindGroupLayoutEntry, super::Error> {
+    let visibility = if stage == naga::ShaderStage::Compute {
+        ShaderStages::COMPUTE
+    } else {
+        ShaderStages::FRAGMENT
+    };
     // no support for texture arrays just yet
     let count = if arrayed { NonZeroU32::new(1) } else { None };
     let out = match class {
@@ -367,7 +380,7 @@ pub fn image_entry_from_naga(
                 view_dimension: image_dim(dim)?,
                 multisampled: *multi,
             },
-            visibility: ShaderStages::all(),
+            visibility,
             binding,
             count,
         },
@@ -377,7 +390,7 @@ pub fn image_entry_from_naga(
                 view_dimension: image_dim(dim)?,
                 multisampled: *multi,
             },
-            visibility: ShaderStages::all(),
+            visibility,
             binding,
             count,
         },
